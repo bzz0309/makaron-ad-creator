@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "output": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "duration": 4.0,
+    "crf": 18,
+    "preset": "medium",
+    "fit": "contain",
+    "vertical_anchor": "top"
+  },
+  "segments": [
+    {
+      "source_start": 0.05,
+      "source_end": 2.48,
+      "speed": 1.35
+    },
+    {
+      "source_start": 8.0,
+      "source_end": 11.3,
+      "speed": 1.5
+    }
+  ],
+  "privacy": {
+    "blur_regions": []
+  },
+  "taps": [
+    {
+      "at": 1.38,
+      "x": 328,
+      "y": 1248,
+      "duration": 0.34,
+      "radius": 74,
+      "line_width": 9,
+      "color": "#FFFFFF",
+      "steps": 10
+    },
+    {
+      "at": 1.43,
+      "x": 328,
+      "y": 1248,
+      "duration": 0.25,
+      "radius": 52,
+      "line_width": 7,
+      "color": "#FF2FD1",
+      "steps": 8
+    },
+    {
+      "at": 3.12,
+      "x": 875,
+      "y": 1775,
+      "duration": 0.30,
+      "radius": 68,
+      "line_width": 9,
+      "color": "#FFFFFF",
+      "steps": 9
+    },
+    {
+      "at": 3.17,
+      "x": 875,
+      "y": 1775,
+      "duration": 0.23,
+      "radius": 46,
+      "line_width": 7,
+      "color": "#FF2FD1",
+      "steps": 7
+    }
+  ]
+}

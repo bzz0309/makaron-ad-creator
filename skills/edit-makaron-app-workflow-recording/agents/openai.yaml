@@ -1,0 +1,5 @@
+interface:
+  display_name: "Automatic Makaron Workflow Demo"
+  short_description: "Generate localized Makaron demos without recording"
+  default_prompt: "Use $edit-makaron-app-workflow-recording to generate English, Traditional Chinese, and Japanese workflow demos for this Makaron Skill ID."
+

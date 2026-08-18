@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "output": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "duration": 4.0,
+    "crf": 18,
+    "preset": "medium",
+    "fit": "contain",
+    "vertical_anchor": "top"
+  },
+  "segments": [
+    {
+      "source_start": 0.5,
+      "source_end": 1.25,
+      "speed": 1.0
+    },
+    {
+      "source_start": 4.45,
+      "source_end": 6.75,
+      "speed": 2.0
+    },
+    {
+      "source_start": 7.2,
+      "source_end": 9.3,
+      "speed": 1.0
+    }
+  ],
+  "privacy": {
+    "blur_regions": [
+      {
+        "source_rect": {
+          "x": 0,
+          "y": 905,
+          "w": 1260,
+          "h": 1831
+        },
+        "source_time": [4.42, 6.8],
+        "sigma": 32,
+        "restore": [
+          {
+            "source_rect": {
+              "x": 0,
+              "y": 905,
+              "w": 420,
+              "h": 420
+            },
+            "source_time": [5.26, 6.8]
+          },
+          {
+            "source_rect": {
+              "x": 420,
+              "y": 905,
+              "w": 420,
+              "h": 420
+            },
+            "source_time": [5.72, 6.8]
+          }
+        ]
+      }
+    ]
+  },
+  "taps": [
+        {
+            "at": 0.38,
+            "x": 280,
+            "y": 1255,
+            "duration": 0.34,
+            "radius": 74,
+            "line_width": 9,
+            "color": "#FFFFFF",
+            "steps": 10
+        },
+        {
+            "at": 0.43,
+            "x": 280,
+            "y": 1255,
+            "duration": 0.25,
+            "radius": 52,
+            "line_width": 7,
+            "color": "#FF2FD1",
+            "steps": 8
+        },
+        {
+            "at": 1.54,
+            "x": 895,
+            "y": 238,
+            "duration": 0.32,
+            "radius": 70,
+            "line_width": 9,
+            "color": "#FFFFFF",
+            "steps": 9
+        },
+        {
+            "at": 1.59,
+            "x": 895,
+            "y": 238,
+            "duration": 0.23,
+            "radius": 50,
+            "line_width": 7,
+            "color": "#FF2FD1",
+            "steps": 7
+        },
+        {
+            "at": 3.2,
+            "x": 873,
+            "y": 1780,
+            "duration": 0.3,
+            "radius": 68,
+            "line_width": 9,
+            "color": "#FFFFFF",
+            "steps": 9
+        },
+        {
+            "at": 3.25,
+            "x": 873,
+            "y": 1780,
+            "duration": 0.23,
+            "radius": 46,
+            "line_width": 7,
+            "color": "#FF2FD1",
+            "steps": 7
+        }
+  ]
+}

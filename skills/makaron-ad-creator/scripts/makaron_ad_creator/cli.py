@@ -1,0 +1,324 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sys
+from datetime import datetime
+from pathlib import Path
+
+from .pipeline import Pipeline, plan_for
+from .schema import campaign_template, validate_config
+from .util import AdCreatorError, json_candidates, read_json, run, sha256, slug, write_json
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+
+
+def _workspace_root() -> Path:
+    return Path(os.environ.get("MAKARON_AD_WORKSPACE", str(PROJECT_ROOT))).expanduser().resolve()
+
+
+def _makaron_binary() -> str:
+    return os.environ.get("MAKARON_AD_MAKARON_BIN", "makaron")
+
+
+def _resolve_marketplace_skill(skill_name: str, binary: str) -> dict:
+    result = run([binary, "skills", "show", skill_name, "--json"], timeout=120)
+    candidates = [value for value in json_candidates(result.stdout) if isinstance(value, dict)]
+    if not candidates:
+        raise AdCreatorError(f"Makaron Marketplace returned no metadata for Skill name: {skill_name}")
+    skill = candidates[-1]
+    if not skill.get("id"):
+        raise AdCreatorError(f"Resolved Marketplace Skill has no stable id: {skill_name}")
+    return skill
+
+
+def _skill_display_name(skill: dict, requested_name: str) -> str:
+    if skill.get("label"):
+        return str(skill["label"])
+    labels = skill.get("labels")
+    if isinstance(labels, dict):
+        for locale in ("en", "zh-Hant", "zh", "ja"):
+            if labels.get(locale):
+                return str(labels[locale])
+    return requested_name
+
+
+def _skill_core(skill: dict, display_name: str) -> str:
+    for key in ("description", "summary", "core", "prompt"):
+        if isinstance(skill.get(key), str) and skill[key].strip():
+            return skill[key].strip()
+    prompts = skill.get("prompts")
+    if isinstance(prompts, dict):
+        for locale in ("en", "zh-Hant", "zh", "ja"):
+            if isinstance(prompts.get(locale), str) and prompts[locale].strip():
+                return prompts[locale].strip()
+    return f"apply the Marketplace Skill named {display_name} to the authorized input image"
+
+
+def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: str, image: Path) -> str:
+    registry_path = workspace / "project-registry.json"
+    registry = read_json(registry_path) if registry_path.exists() else {"version": 1, "bindings": {}}
+    existing = registry.setdefault("bindings", {}).get(skill_id)
+    if existing:
+        return str(existing)
+    result = run([binary, "create", "--image", str(image), "--title", f"makaron-ad · {skill_name}"], timeout=300)
+    match = re.search(r"^\s*ID:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
+    if not match:
+        candidates = [value for value in json_candidates(result.stdout) if isinstance(value, dict)]
+        project_id = next((str(value.get("projectId") or value.get("project_id")) for value in reversed(candidates) if value.get("projectId") or value.get("project_id")), "")
+    else:
+        project_id = match.group(1)
+    if not project_id or project_id == "auto":
+        raise AdCreatorError("Makaron created a project but returned no persistent project ID")
+    registry["bindings"][skill_id] = project_id
+    write_json(registry_path, registry)
+    return project_id
+
+
+def command_make(args: argparse.Namespace) -> int:
+    """Public two-input entrypoint: image + Marketplace Skill name."""
+    image = Path(args.image).expanduser().resolve()
+    if not image.is_file():
+        raise AdCreatorError(f"Input image not found: {image}")
+    workspace = _workspace_root()
+    binary = _makaron_binary()
+    skill = _resolve_marketplace_skill(args.skill_name, binary)
+    skill_id = str(skill["id"])
+    display_name = _skill_display_name(skill, args.skill_name)
+    core = _skill_core(skill, display_name)
+    project_id = _project_for_skill(workspace, binary, skill_id, display_name, image)
+    fingerprint = sha256(image)[:8]
+    campaign_id = slug(f"{display_name}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-{fingerprint}")
+    campaign_dir = workspace / "campaigns" / campaign_id
+    config_path = campaign_dir / "campaign.json"
+    config = campaign_template(
+        campaign_id=campaign_id,
+        image=image,
+        skill_id=skill_id,
+        skill_name=display_name,
+        skill_core=core,
+        project_id=project_id,
+        subject_description="authorized adult, fictional character, or owned product in the supplied input image",
+    )
+    config["automation"]["executor"] = "makaron"
+    config["automation"]["makaron_binary"] = binary
+    config["offer"]["value_proposition"] = f"Create the {display_name} result from one photo"
+    config["resolved_marketplace_skill"] = skill
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    write_json(config_path, config)
+    write_json(campaign_dir / "plan.json", {"version": 1, "campaign_id": campaign_id, "nodes": plan_for(config)})
+    pipeline = Pipeline(config_path, executor="makaron")
+    status = pipeline.run()
+    payload = {
+        "status": status,
+        "campaign": str(config_path),
+        "project_id": project_id,
+        "deliverables": str(campaign_dir / "deliverables"),
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if status == "PASS" else 2
+
+
+def command_init(args: argparse.Namespace) -> int:
+    if not args.confirm_rights:
+        raise AdCreatorError("Use --confirm-rights only after confirming ownership/consent, adult-or-nonperson status, and substantiated claims")
+    image = Path(args.image).expanduser().resolve()
+    if not image.is_file():
+        raise AdCreatorError(f"Input image not found: {image}")
+    if not args.project_id or args.project_id == "auto":
+        raise AdCreatorError("--project-id must be the persistent non-auto Makaron project bound to this Skill")
+    campaign_id = args.campaign_id or slug(f"{args.skill_name}-{image.stem}")
+    campaign_dir = (Path(args.output_dir).expanduser().resolve() if args.output_dir else PROJECT_ROOT / "campaigns" / campaign_id)
+    config_path = campaign_dir / "campaign.json"
+    if config_path.exists() and not args.force:
+        raise AdCreatorError(f"Campaign already exists: {config_path}; use --force only to replace the config")
+    config = campaign_template(
+        campaign_id=campaign_id,
+        image=image,
+        skill_id=args.skill,
+        skill_name=args.skill_name,
+        skill_core=args.skill_core,
+        project_id=args.project_id,
+        subject_description=args.subject_description,
+    )
+    if args.executor:
+        config["automation"]["executor"] = args.executor
+    if args.catalog_json:
+        config["catalog_json"] = str(Path(args.catalog_json).expanduser().resolve())
+    if args.logo_cta:
+        config["assets"]["logo_cta"] = str(Path(args.logo_cta).expanduser().resolve())
+    campaign_dir.mkdir(parents=True, exist_ok=True)
+    write_json(config_path, config)
+    validate_config(read_json(config_path), config_path)
+    write_json(campaign_dir / "plan.json", {"version": 1, "campaign_id": campaign_id, "nodes": plan_for(config)})
+    print(config_path)
+    return 0
+
+
+def command_plan(args: argparse.Namespace) -> int:
+    config_path = Path(args.campaign).expanduser().resolve()
+    config = validate_config(read_json(config_path), config_path)
+    plan = {"version": 1, "campaign_id": config["campaign_id"], "nodes": plan_for(config)}
+    destination = config_path.parent / "plan.json"
+    write_json(destination, plan)
+    print(json.dumps(plan, ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_run(args: argparse.Namespace) -> int:
+    pipeline = Pipeline(Path(args.campaign), executor=args.executor)
+    status = pipeline.run()
+    payload = {"status": status, "state": str(pipeline.state_path)}
+    waiting = next((value for value in pipeline.state["nodes"].values() if value.get("status") == "WAITING_FOR_AGENT"), None)
+    if waiting:
+        payload["request"] = waiting.get("request")
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if status == "PASS" else 3
+
+
+def command_status(args: argparse.Namespace) -> int:
+    config_path = Path(args.campaign).expanduser().resolve()
+    state_path = config_path.parent / "state.json"
+    if not state_path.exists():
+        print(json.dumps({"status": "NOT_STARTED", "state": str(state_path)}, indent=2))
+        return 0
+    print(json.dumps(read_json(state_path), ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_complete(args: argparse.Namespace) -> int:
+    pipeline = Pipeline(Path(args.campaign), executor="agent")
+    pipeline.complete_agent_node(args.node, Path(args.artifact), args.response_id)
+    print(json.dumps({"status": "PASS", "node": args.node, "state": str(pipeline.state_path)}, indent=2))
+    return 0
+
+
+def command_fail(args: argparse.Namespace) -> int:
+    pipeline = Pipeline(Path(args.campaign), executor="agent")
+    pipeline.fail_agent_node(args.node, args.error)
+    status = pipeline.state["nodes"][args.node]["status"]
+    print(json.dumps({"status": status, "node": args.node, "state": str(pipeline.state_path)}, indent=2))
+    return 3 if status == "PENDING" else 2
+
+
+def command_retry(args: argparse.Namespace) -> int:
+    pipeline = Pipeline(Path(args.campaign))
+    node_ids = [item["id"] for item in pipeline.plan]
+    if args.node not in node_ids:
+        raise AdCreatorError(f"Unknown node: {args.node}")
+    reset = {args.node}
+    changed = True
+    while changed:
+        changed = False
+        for node in pipeline.plan:
+            if node["id"] not in reset and any(dep in reset for dep in node["depends_on"]):
+                reset.add(node["id"])
+                changed = True
+    for node_id in reset:
+        pipeline.state["nodes"][node_id] = {"status": "PENDING", "attempts": 0, "artifacts": []}
+    pipeline.state["status"] = "PENDING"
+    pipeline.save()
+    print(json.dumps({"reset": [node for node in node_ids if node in reset]}, indent=2))
+    return 0
+
+
+def command_doctor(_: argparse.Namespace) -> int:
+    checks = {
+        "python": sys.version.split()[0],
+        "ffmpeg": shutil.which("ffmpeg"),
+        "ffprobe": shutil.which("ffprobe"),
+        "makaron": shutil.which("makaron"),
+        "pillow": None,
+        "workflow_skill": str(PROJECT_ROOT / "skills" / "edit-makaron-app-workflow-recording" / "SKILL.md"),
+    }
+    try:
+        import PIL
+        checks["pillow"] = PIL.__version__
+    except ImportError:
+        pass
+    required = (checks["ffmpeg"], checks["ffprobe"], checks["makaron"], checks["pillow"], Path(checks["workflow_skill"]).is_file())
+    checks["pass"] = all(required)
+    print(json.dumps(checks, ensure_ascii=False, indent=2))
+    return 0 if checks["pass"] else 2
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser(prog="makaron-ad", description="One-image to three-locale Makaron ad orchestration")
+    sub = root.add_subparsers(dest="command", required=True)
+
+    make = sub.add_parser("make", help="One-command production: INPUT_IMAGE + MARKETPLACE_SKILL_NAME")
+    make.add_argument("image")
+    make.add_argument("skill_name")
+    make.set_defaults(func=command_make)
+
+    init = sub.add_parser("init", help="Create a campaign config and deterministic asset plan")
+    init.add_argument("--image", required=True)
+    init.add_argument("--skill", required=True, help="Marketplace Skill ID")
+    init.add_argument("--skill-name", required=True)
+    init.add_argument("--skill-core", required=True)
+    init.add_argument("--project-id", required=True, help="Persistent project already authorized for this Skill")
+    init.add_argument("--subject-description", default="authorized adult subject or owned product in the supplied image")
+    init.add_argument("--campaign-id")
+    init.add_argument("--output-dir")
+    init.add_argument("--catalog-json")
+    init.add_argument("--logo-cta")
+    init.add_argument("--executor", choices=("agent", "makaron"), default="agent")
+    init.add_argument("--confirm-rights", action="store_true")
+    init.add_argument("--force", action="store_true")
+    init.set_defaults(func=command_init)
+
+    plan = sub.add_parser("plan", help="Print and save the campaign DAG")
+    plan.add_argument("campaign")
+    plan.set_defaults(func=command_plan)
+
+    execute = sub.add_parser("run", help="Run or resume a campaign")
+    execute.add_argument("campaign")
+    execute.add_argument("--executor", choices=("agent", "makaron"))
+    execute.set_defaults(func=command_run)
+
+    status = sub.add_parser("status", help="Print resumable pipeline state")
+    status.add_argument("campaign")
+    status.set_defaults(func=command_status)
+
+    complete = sub.add_parser("complete", help="Attach an artifact produced by another Agent")
+    complete.add_argument("campaign")
+    complete.add_argument("--node", required=True)
+    complete.add_argument("--artifact", required=True)
+    complete.add_argument("--response-id")
+    complete.set_defaults(func=command_complete)
+
+    fail = sub.add_parser("fail", help="Report a failed Agent request and advance its retry budget")
+    fail.add_argument("campaign")
+    fail.add_argument("--node", required=True)
+    fail.add_argument("--error", required=True)
+    fail.set_defaults(func=command_fail)
+
+    retry = sub.add_parser("retry", help="Reset one node and all downstream nodes")
+    retry.add_argument("campaign")
+    retry.add_argument("--node", required=True)
+    retry.set_defaults(func=command_retry)
+
+    doctor = sub.add_parser("doctor", help="Check local runtime dependencies")
+    doctor.set_defaults(func=command_doctor)
+    return root
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        raw = list(sys.argv[1:] if argv is None else argv)
+        commands = {"make", "init", "plan", "run", "status", "complete", "fail", "retry", "doctor"}
+        if len(raw) >= 2 and raw[0] not in commands and not raw[0].startswith("-"):
+            raw.insert(0, "make")
+        args = parser().parse_args(raw)
+        return int(args.func(args))
+    except AdCreatorError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

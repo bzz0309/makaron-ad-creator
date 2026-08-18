@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "campaign_id": "example-campaign",
+  "input_image": "/absolute/path/to/owned-input.jpg",
+  "subject_description": "authorized adult subject in the supplied image",
+  "target_skill": {
+    "id": "marketplace-skill-id",
+    "name": "Example Skill",
+    "core": "transform the authorized portrait into a cinematic editorial scene",
+    "transformation_type": "identity"
+  },
+  "project_binding": {
+    "strategy": "one_skill_one_persistent_project",
+    "skill_id": "marketplace-skill-id",
+    "project_id": "persistent-project-id"
+  },
+  "rights": {
+    "owned_or_licensed": true,
+    "adult_or_nonperson": true,
+    "claims_substantiated": true
+  },
+  "offer": {
+    "value_proposition": "Create a new visual direction from one photo",
+    "cta": "TRY MAKARON",
+    "destination_url": ""
+  },
+  "locales": [
+    {"ad_locale": "en", "ui_locale": "en"},
+    {"ad_locale": "ja", "ui_locale": "ja"},
+    {"ad_locale": "yue", "ui_locale": "zh-Hant"}
+  ],
+  "style_constraints": ["brand-safe", "identity-stable", "no unsupported claims"],
+  "automation": {
+    "executor": "agent",
+    "makaron_binary": "makaron",
+    "max_attempts": 3,
+    "builder_skill_id": ""
+  },
+  "assets": {"logo_cta": ""},
+  "output": {"width": 1080, "height": 1920, "duration_seconds": 18.0, "format": "mp4"}
+}
+

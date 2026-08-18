@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+/work/
+/build/
+/dist/
+*.egg-info/
+campaigns/*/run/
+campaigns/*/deliverables/
+campaigns/*/state.json
+campaigns/*/project-binding.json
+project-registry.json

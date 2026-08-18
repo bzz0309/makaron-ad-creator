@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "makaron-ad-creator"
+version = "0.2.0"
+description = "Resumable one-image to three-locale Makaron ad orchestration"
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10"]
+
+[project.scripts]
+makaron-ad = "makaron_ad_creator.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "skills/makaron-ad-creator/scripts"}
+
+[tool.setuptools.packages.find]
+where = ["skills/makaron-ad-creator/scripts"]

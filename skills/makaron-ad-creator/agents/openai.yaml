@@ -1,0 +1,8 @@
+interface:
+  display_name: "Makaron Ad Creator"
+  short_description: "Turn one image into three localized Makaron ad videos"
+  default_prompt: "Use $makaron-ad-creator to turn one owned image and one Makaron Skill into English, Japanese, and Cantonese ad videos."
+
+policy:
+  allow_implicit_invocation: true
+
