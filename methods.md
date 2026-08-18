@@ -20,3 +20,6 @@ Persist prompt, command shape, response ID, local path, SHA-256, size, project b
 
 Metadata-driven UI animation is appropriate for scalable workflow proof, but must not be represented as genuine device footage. Genuine recordings remain a separate compatibility mode.
 
+## Separate distribution from orchestration
+
+Use a small Node launcher for `npx` installation, runtime discovery, Agent Skill installation, and authentication passthrough. Keep the tested Python DAG as the orchestration core. This gives a one-command cross-machine setup without rewriting campaign behavior or requiring users to manage Python dependencies.

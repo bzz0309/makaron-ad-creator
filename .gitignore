@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv/
+node_modules/
+*.tgz
+npm-debug.log*
 /work/
 /build/
 /dist/
