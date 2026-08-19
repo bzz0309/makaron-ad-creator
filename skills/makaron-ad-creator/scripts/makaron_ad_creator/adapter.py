@@ -55,6 +55,7 @@ class MakaronAdapter:
         images: list[Path] | None = None,
         videos: list[Path] | None = None,
         audios: list[Path | str] | None = None,
+        require_generated_video: bool = False,
     ) -> dict[str, Any]:
         prompt_path = self.run_dir / "prompts" / f"{node_id}.txt"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,22 +76,59 @@ class MakaronAdapter:
         raw: Any = values[-1] if values else {"text": result.stdout}
         response_id = extract_response_id(raw)
         urls = extract_media_urls(raw)
-        if response_id and not urls:
+        needs_materialized_response = not urls or (
+            require_generated_video
+            and not extract_generated_video_urls(raw)
+            and not extract_remotion_design(raw)
+        )
+        if response_id and needs_materialized_response:
             raw, urls = self._materialize(node_id, response_id, raw)
+        response_path = self.run_dir / "responses" / f"{node_id}.json"
+        write_json(response_path, {"response_id": response_id, "media_urls": urls, "response": raw})
         if destination:
-            if not urls:
+            downloadable = extract_generated_video_urls(raw) if require_generated_video else urls
+            if not downloadable:
+                if require_generated_video:
+                    fallback = self.render_remotion_fallback(node_id, raw, destination)
+                    return {
+                        "response_id": response_id,
+                        "media_urls": urls,
+                        "response": raw,
+                        "response_path": str(response_path),
+                        "render_fallback": fallback,
+                    }
                 raise AdCreatorError(f"Makaron returned no downloadable media for {node_id}; response_id={response_id or 'unknown'}")
             expected_video = destination.suffix.lower() in {".mp4", ".mov", ".m4v"}
             matching = []
-            for url in urls:
+            for url in downloadable:
                 suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
                 is_video = suffix in {".mp4", ".mov", ".m4v", ".webm"} or "video" in url.lower()
                 if is_video == expected_video:
                     matching.append(url)
-            download((matching or urls)[0], destination)
-        response_path = self.run_dir / "responses" / f"{node_id}.json"
-        write_json(response_path, {"response_id": response_id, "media_urls": urls, "response": raw})
+            download((matching or downloadable)[0], destination)
         return {"response_id": response_id, "media_urls": urls, "response": raw, "response_path": str(response_path)}
+
+    def render_remotion_fallback(self, node_id: str, response: Any, destination: Path) -> dict[str, Any]:
+        design = extract_remotion_design(response)
+        if not design:
+            raise AdCreatorError(
+                f"Makaron returned no exported final MP4 or reusable Remotion design for {node_id}; "
+                "attached source videos are not final artifacts"
+            )
+        design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
+        write_json(design_path, design)
+        script = Path(__file__).resolve().parents[1] / "remotion_fallback" / "render.mjs"
+        if not script.is_file():
+            raise AdCreatorError(f"Bundled Remotion fallback renderer is missing: {script}")
+        node = require_binary("node")
+        run([node, str(script), str(design_path), str(destination)], timeout=3600)
+        if not destination.is_file() or destination.stat().st_size == 0:
+            raise AdCreatorError("Local Remotion fallback did not create a non-empty final MP4")
+        return {
+            "engine": "local-remotion-from-makaron-design",
+            "design_path": str(design_path),
+            "snapshot_id": design.get("snapshotId") or design.get("snapshot_id"),
+        }
 
     def create_music(
         self,
@@ -174,6 +212,63 @@ class MakaronAdapter:
             if urls:
                 return last, urls
         return last, []
+
+
+def extract_generated_video_urls(response: Any) -> list[str]:
+    """Return only videos produced by the response, never uploaded source attachments."""
+    found: list[str] = []
+    roots = [response]
+    if isinstance(response, dict) and isinstance(response.get("response"), dict):
+        roots.append(response["response"])
+
+    def add(candidate: Any) -> None:
+        if not isinstance(candidate, str) or not candidate.startswith(("https://", "http://")):
+            return
+        suffix = Path(urllib.parse.urlparse(candidate).path).suffix.lower()
+        if suffix not in {".mp4", ".mov", ".m4v", ".webm"} and "video" not in candidate.lower():
+            return
+        if candidate not in found:
+            found.append(candidate)
+
+    for root in roots:
+        if not isinstance(root, dict):
+            continue
+        for item in root.get("output", []) if isinstance(root.get("output"), list) else []:
+            if isinstance(item, dict) and str(item.get("type", "")).lower() == "video":
+                add(item.get("url") or item.get("videoUrl") or item.get("video_url"))
+        result = root.get("result")
+        if isinstance(result, dict):
+            for item in result.get("videos", []) if isinstance(result.get("videos"), list) else []:
+                if isinstance(item, dict):
+                    add(item.get("videoUrl") or item.get("video_url") or item.get("url"))
+                else:
+                    add(item)
+        for item in root.get("videos", []) if isinstance(root.get("videos"), list) else []:
+            if isinstance(item, dict):
+                add(item.get("videoUrl") or item.get("video_url") or item.get("url"))
+            else:
+                add(item)
+    return found
+
+
+def extract_remotion_design(response: Any) -> dict[str, Any] | None:
+    roots = [response]
+    if isinstance(response, dict) and isinstance(response.get("response"), dict):
+        roots.append(response["response"])
+    for root in roots:
+        if not isinstance(root, dict):
+            continue
+        result = root.get("result")
+        designs = result.get("designs", []) if isinstance(result, dict) else []
+        for design in designs if isinstance(designs, list) else []:
+            if (
+                isinstance(design, dict)
+                and isinstance(design.get("code"), str)
+                and isinstance(design.get("props"), dict)
+                and isinstance(design.get("animation"), dict)
+            ):
+                return design
+    return None
 
 
 def extract_json_object(response: Any, required_keys: tuple[str, ...] = ("en", "ja", "yue")) -> dict[str, Any]:

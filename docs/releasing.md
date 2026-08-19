@@ -37,13 +37,13 @@ npm publish --access public
 Never commit npm tokens. After publication, verify from a clean directory:
 
 ```bash
-npx -y makaron-ad-creator-cli@0.5.0 setup
+npx -y makaron-ad-creator-cli@<new-version> setup
 makaron-ad doctor
 ```
 
 ## GitHub
 
-Merge the reviewed release PR, tag the same version as `v0.5.0`, and attach the npm package URL to the GitHub release notes. Do not publish generated ads or credentials as release assets.
+Merge the reviewed release PR, tag the same version as `v<new-version>`, and attach the exact npm tarball plus checksum to the GitHub release. Do not publish generated ads or credentials as release assets.
 
 The release notes must include the previous version and these rollback commands with concrete version numbers:
 

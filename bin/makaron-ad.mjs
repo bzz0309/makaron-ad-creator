@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const VERSION = '0.5.0';
+const VERSION = '0.5.1';
 const PACKAGE = 'makaron-ad-creator-cli';
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MAIN_SKILL = path.join(PACKAGE_ROOT, 'skills', 'makaron-ad-creator');
@@ -16,6 +16,8 @@ const APP_HOME = path.resolve(process.env.MAKARON_AD_HOME || path.join(os.homedi
 const CONFIG_FILE = path.join(APP_HOME, 'config.json');
 const VENV_DIR = path.join(APP_HOME, 'venv');
 const WORKSPACE_DIR = path.join(APP_HOME, 'workspace');
+const KEYCHAIN_SERVICE = 'makaron-ad-creator-cli';
+const KEYCHAIN_ACCOUNT = 'default';
 const require = createRequire(import.meta.url);
 
 class CliError extends Error {
@@ -101,6 +103,92 @@ function executable(name, extraPath = process.env.PATH || '') {
   return null;
 }
 
+function keychainBinary() {
+  if (process.env.MAKARON_AD_KEYCHAIN_BIN) return process.env.MAKARON_AD_KEYCHAIN_BIN;
+  if (process.platform !== 'darwin') return null;
+  return executable('security');
+}
+
+function storedApiKey() {
+  const keychain = keychainBinary();
+  if (!keychain) return null;
+  const result = spawnSync(keychain, [
+    'find-generic-password', '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-w',
+  ], {encoding: 'utf8'});
+  if (result.status !== 0) return null;
+  const secret = String(result.stdout || '').trim();
+  return secret || null;
+}
+
+function credentialStatus() {
+  const keychain = keychainBinary();
+  return {
+    backend: keychain ? 'macos-keychain' : 'environment-only',
+    stored: Boolean(storedApiKey()),
+  };
+}
+
+function saveApiKey(secret) {
+  const keychain = keychainBinary();
+  if (!keychain) {
+    fail('KEYCHAIN_UNAVAILABLE', 'Persistent login currently requires macOS Keychain. Other systems can set MAKARON_API_KEY in the Agent environment.');
+  }
+  const result = spawnSync(keychain, [
+    'add-generic-password', '-U', '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE, '-w', secret,
+  ], {encoding: 'utf8'});
+  if (result.status !== 0) {
+    fail('KEYCHAIN_WRITE_FAILED', String(result.stderr || 'Could not save the Makaron API key in macOS Keychain.').trim());
+  }
+}
+
+function deleteApiKey() {
+  const keychain = keychainBinary();
+  if (!keychain) return false;
+  const result = spawnSync(keychain, [
+    'delete-generic-password', '-a', KEYCHAIN_ACCOUNT, '-s', KEYCHAIN_SERVICE,
+  ], {encoding: 'utf8'});
+  return result.status === 0;
+}
+
+function readHidden(prompt) {
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
+    fail('INTERACTIVE_LOGIN_REQUIRED', 'Run makaron-ad login in an interactive terminal, or set MAKARON_API_KEY once before running login.');
+  }
+  process.stderr.write(prompt);
+  process.stdin.setEncoding('utf8');
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  return new Promise((resolve, reject) => {
+    let secret = '';
+    const finish = () => {
+      process.stdin.off('data', onData);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stderr.write('\n');
+      resolve(secret.trim());
+    };
+    const onData = (chunk) => {
+      for (const character of chunk) {
+        if (character === '\u0003') {
+          process.stdin.off('data', onData);
+          process.stdin.setRawMode(false);
+          process.stdin.pause();
+          process.stderr.write('\n');
+          reject(new CliError('LOGIN_CANCELLED', 'Login cancelled.'));
+          return;
+        }
+        if (character === '\r' || character === '\n') {
+          finish();
+          return;
+        }
+        if (character === '\u007f' || character === '\b') secret = secret.slice(0, -1);
+        else secret += character;
+      }
+    };
+    process.stdin.on('data', onData);
+  });
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || PACKAGE_ROOT,
@@ -141,6 +229,10 @@ function runtimeEnvironment(config = readJson(CONFIG_FILE)) {
     PYTHONDONTWRITEBYTECODE: process.env.PYTHONDONTWRITEBYTECODE || '1',
     MAKARON_AD_WORKSPACE: process.env.MAKARON_AD_WORKSPACE || config.workspace || WORKSPACE_DIR,
   };
+  if (!env.MAKARON_API_KEY) {
+    const secret = storedApiKey();
+    if (secret) env.MAKARON_API_KEY = secret;
+  }
   const makaron = process.env.MAKARON_AD_MAKARON_BIN || executable('makaron', env.PATH);
   if (makaron) env.MAKARON_AD_MAKARON_BIN = makaron;
   return {env, ffmpeg: ffmpeg || executable('ffmpeg', env.PATH), ffprobe: ffprobe || executable('ffprobe', env.PATH), makaron};
@@ -253,20 +345,46 @@ function doctor() {
       try { pythonDoctor = JSON.parse(result.stdout); } catch { pythonDoctor = {pass: false, raw: result.stdout}; }
     }
   }
-  const makaronAuthHint = Boolean(process.env.MAKARON_API_KEY || fs.existsSync(path.join(os.homedir(), '.makaron', 'auth.json')));
+  const credential = credentialStatus();
+  const makaronAuthHint = Boolean(process.env.MAKARON_API_KEY || credential.stored || fs.existsSync(path.join(os.homedir(), '.makaron', 'auth.json')));
   const checks = {
     package: {name: PACKAGE, version: VERSION, root: PACKAGE_ROOT},
     config: {file: CONFIG_FILE, present: fs.existsSync(CONFIG_FILE), workspace: config.workspace || WORKSPACE_DIR},
     python: {command: python, version: pythonVersion(python), pillow: pillowVersion(python)},
     ffmpeg: runtime.ffmpeg,
     ffprobe: runtime.ffprobe,
-    makaron: {command: runtime.makaron, auth_hint_present: makaronAuthHint},
+    makaron: {command: runtime.makaron, auth_hint_present: makaronAuthHint, credential},
     skill: {bundled: fs.existsSync(path.join(MAIN_SKILL, 'SKILL.md')), directory: MAIN_SKILL},
     python_doctor: pythonDoctor,
   };
   checks.ok = Boolean(python && runtime.ffmpeg && runtime.ffprobe && runtime.makaron && checks.skill.bundled && pythonDoctor?.pass);
   if (!makaronAuthHint) checks.makaron.next_step = 'Run makaron-ad login before live generation if Makaron is not already authenticated through the system keyring.';
   return checks;
+}
+
+async function login() {
+  const supplied = String(process.env.MAKARON_API_KEY || '').trim();
+  const secret = supplied || await readHidden('Paste Makaron API key (input hidden), then press Enter: ');
+  if (!secret) fail('API_KEY_REQUIRED', 'No Makaron API key was provided.');
+  const runtime = runtimeEnvironment(readJson(CONFIG_FILE));
+  if (!runtime.makaron) fail('MAKARON_CLI_REQUIRED', 'Makaron CLI is unavailable. Run setup first.');
+  const verification = spawnSync(runtime.makaron, ['credits'], {
+    env: {...runtime.env, MAKARON_API_KEY: secret},
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if (verification.error) fail('MAKARON_LOGIN_FAILED', verification.error.message, true);
+  if (verification.status !== 0) {
+    const detail = String(verification.stderr || verification.stdout || '').trim().slice(-2000);
+    fail('MAKARON_LOGIN_FAILED', `The API key could not be verified${detail ? `: ${detail}` : ''}`, false);
+  }
+  saveApiKey(secret);
+  emit({ok: true, authenticated: true, credential: credentialStatus(), message: 'Makaron API key verified and saved in macOS Keychain.'});
+}
+
+function logout() {
+  const removed = deleteApiKey();
+  emit({ok: true, removed, message: removed ? 'Stored Makaron API key removed from macOS Keychain.' : 'No stored Makaron API key was found.'});
 }
 
 function runPython(args) {
@@ -295,7 +413,7 @@ function runMakaron(args) {
 }
 
 function help() {
-  console.log(`${PACKAGE} ${VERSION}\n\nUsage:\n  npx -y ${PACKAGE} setup [--agent codex]\n  makaron-ad login\n  makaron-ad create --image /path/input.jpg --skill "Marketplace Skill Name" [--locale en|ja|yue|all]\n\nAgent-friendly shorthand:\n  makaron-ad /path/input.jpg "Marketplace Skill Name" [--locale yue]\n\nCommands:\n  setup          Install the global CLI, private Python/Pillow runtime, and Agent Skill\n  install-skill  Install only the bundled makaron-ad-creator Skill\n  login          Authenticate the bundled Makaron CLI on this computer\n  credits        Show Makaron credit balance\n  doctor         Check runtime, Makaron, FFmpeg, and Skill availability\n  create         Generate one or more selected locales (default: EN/JA/YUE)\n  status         Inspect a resumable campaign\n  run            Resume a campaign\n\nLocale mapping is fixed: en→English UI, ja→Japanese UI, yue→Traditional-Chinese UI. All workflow command results are JSON. Live create operations use Makaron credits. Supplying an image attests that it is authorized for the requested ad production.`);
+  console.log(`${PACKAGE} ${VERSION}\n\nUsage:\n  npx -y ${PACKAGE} setup [--agent codex]\n  makaron-ad login\n  makaron-ad create --image /path/input.jpg --skill "Marketplace Skill Name" [--locale en|ja|yue|all]\n\nAgent-friendly shorthand:\n  makaron-ad /path/input.jpg "Marketplace Skill Name" [--locale yue]\n\nCommands:\n  setup          Install the global CLI, private Python/Pillow runtime, and Agent Skill\n  install-skill  Install only the bundled makaron-ad-creator Skill\n  login          Verify once and save the API key in macOS Keychain\n  logout         Remove the saved API key from macOS Keychain\n  credits        Show Makaron credit balance using the saved login\n  doctor         Check runtime, Makaron, FFmpeg, and Skill availability\n  create         Generate one or more selected locales (default: EN/JA/YUE)\n  status         Inspect a resumable campaign\n  run            Resume a campaign\n\nLocale mapping is fixed: en→English UI, ja→Japanese UI, yue→Traditional-Chinese UI. All workflow command results are JSON. Live create operations use Makaron credits. Supplying an image attests that it is authorized for the requested ad production.`);
 }
 
 function selectedLocales(options) {
@@ -327,13 +445,15 @@ function normalizePythonArgs(command, options) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const commands = new Set(['setup', 'install-skill', 'login', 'credits', 'doctor', 'create', 'make', 'run', 'status', 'complete', 'fail', 'retry', 'plan', 'init', 'help', 'version']);
+  const commands = new Set(['setup', 'install-skill', 'login', 'logout', 'credits', 'doctor', 'create', 'make', 'run', 'status', 'complete', 'fail', 'retry', 'plan', 'init', 'help', 'version']);
   if (argv.length >= 2 && !commands.has(argv[0]) && !argv[0].startsWith('-')) argv.unshift('create');
   const [command = 'help', ...rest] = argv;
   if (command === 'help' || command === '--help') return help();
   if (command === 'version' || command === '--version') return console.log(VERSION);
   if (command === 'doctor') return emit(doctor());
-  if (command === 'login' || command === 'credits') return runMakaron([command, ...rest]);
+  if (command === 'login') return login();
+  if (command === 'logout') return logout();
+  if (command === 'credits') return runMakaron([command, ...rest]);
   if (!['setup', 'install-skill', 'create', 'make'].includes(command)) return runPython([command, ...rest]);
   const options = parseArgs(rest);
   if (options.help) return help();
