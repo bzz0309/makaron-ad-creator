@@ -7,7 +7,7 @@
 The executing Agent must:
 
 1. verify `project_id` is explicit and not `auto`;
-2. use only `makaron chat --project <project_id>` for generation;
+2. use `makaron chat --project <project_id>` for every generative node except `bgm`; execute `bgm` with exactly one standalone `makaron music create` call;
 3. use the request's exact prompt and attached inputs;
 4. save the requested artifact locally;
 5. call `makaron-ad complete ...` with the node and artifact;
@@ -24,7 +24,8 @@ Never mark a request complete from prose alone. The artifact must exist and matc
 | `generate_json` | UTF-8 JSON with exactly five strings under each selected locale key and no unselected locale keys |
 | `generate_image` | One decoded PNG/JPEG/WebP |
 | `invoke_skill_video` | One MP4 created by the exact target Marketplace Skill |
-| `assemble_localized_ad` | One localized four-part 1080×1920 H.264/AAC body; `postprocess` tells the CLI to append the fixed Logo CTA locally as part five |
+| `generate_instrumental_bgm` | One at-least-20-second instrumental audio file plus its generated HTTP(S) source URL; call `complete` with `--source-url` so chat can attach the long BGM without local upload limits |
+| `assemble_localized_ad` | One complete localized five-part 1080×1920 H.264/AAC MP4 rendered by one project-bound Makaron chat through internal Remotion; inputs include CTA and BGM, and there is no local final post-process |
 
 ## Recovery
 

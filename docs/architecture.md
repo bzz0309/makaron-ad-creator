@@ -14,7 +14,7 @@ A single large Skill can describe the workflow, but it cannot reliably retain no
 
 The CLI writes a visible DAG and state file, executes local nodes, and either calls Makaron directly or pauses on a machine-readable request for another Agent. The same campaign can therefore move between agents without re-planning or losing provenance.
 
-The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. Final generation receives explicit roles for the first four parts; the CLI then uses local FFmpeg to append the fixed CTA as part five, avoiding generative brand drift. Target-locale TTS defaults to a young-adult female voice and ends before the CTA.
+The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. A dedicated `bgm` DAG node calls `makaron music create` once and reuses that audio across locales. Each final node sends the comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat`; the Agent's internal Remotion workflow mutes all source video audio, generates Seed Audio TTS, burns synchronized subtitles, loops the BGM through CTA, and directly exports the complete MP4. Local FFmpeg remains a probe/compression dependency, not the final concat/amix/subtitle engine.
 
 ```text
 master Skill

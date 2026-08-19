@@ -1,14 +1,16 @@
 ---
 name: makaron-ad-video-builder
-description: Assemble the first four parts of one localized Makaron vertical ad from a comparison image, target-Skill effect video, localized workflow video, and five voiceover lines. Use as the en, ja, or yue body node before makaron-ad-creator appends its fixed Logo CTA locally.
+description: Assemble one complete localized Makaron vertical ad through a single project-bound chat-driven Remotion run using a comparison image, effect video, localized workflow video, fixed Logo CTA, one campaign BGM, and five voiceover lines.
 ---
 
 # Makaron Ad Video Builder
 
 Run only inside the persistent project already bound to the target Skill. Never use `--project auto`, a hard-coded shared project, standalone generation, or a separate TTS project.
 
-Create the 1080×1920, 30fps, H.264/AAC body with this locked order: strongest-result Hook video; simultaneous comparison image; locale-correct synthetic workflow video; full effect/result video. Keep the body between 12 and 17 seconds, aiming for 15. Use a 2.5–5 second Hook, exactly 2.5 seconds of comparison, 3.5–4.5 seconds of workflow, and at least 3 seconds of result. Use the longer Hook only when the Skill action is not legible in 2.5 seconds, and extend the result only long enough for one complete payoff. Generate one continuous natural-locale voiceover from the exact five lines using the configured TTS voice, defaulting to a natural energetic young-adult female voice, plus one synchronized upper-safe subtitle set and licensed/new instrumental BGM at least 8dB under voiceover.
+Create the complete 1080×1920, 30fps, H.264/AAC final with this locked order: strongest-result Hook video; simultaneous comparison image; locale-correct synthetic workflow video; full effect/result video; fixed Logo CTA. Keep the complete video between 15 and 20 seconds, aiming for 18. Use a 2.5–5 second Hook, exactly 2.5 seconds of comparison, 3.5–4.5 seconds of workflow, at least 3 seconds of result, and exactly 2–3 seconds of the configured CTA excerpt.
 
-Do not generate a CTA, end card, duplicate title card, or black tail. The CLI appends a fixed 2–3 second Makaron Logo CTA excerpt after this body with local FFmpeg, preserving its content and audio without model involvement. Finish TTS, subtitles, and BGM cleanly at the body endpoint. Mute source audio from the effect and workflow videos. Do not truncate the final spoken word or invent claims.
+Use one project-bound `makaron chat` request and direct the Makaron Agent to compose/export through its internal Remotion workflow. Generate one continuous Seed Audio voiceover from the exact five lines using a natural energetic young-adult female voice. Burn exactly one subtitle set synchronized to all spoken lines, top-aligned 140px from the top, white with black outline, no background bar, and maximum two lines; English is uppercase while Japanese and Cantonese retain natural case. Finish TTS before CTA and never truncate the final word.
 
-Use `seedance-fast`, then `kling`, then `grok` only for a failed final node. Return one MP4 plus concise QC. Missing audio, wrong dimensions, body outside 12–17 seconds, black frames, wrong locale, or subtitle collision is `REROLL`; identity/product loss, policy risk, project isolation failure, or three failed attempts is `BLOCKED`.
+Mute original audio from the effect, workflow, and fixed CTA videos. Use the supplied campaign BGM only, loop that same track from 0.0 seconds through the final CTA frame at relative volume 0.22 under TTS, never switch tracks, and apply only a gentle final fade. Do not use CTA source audio, local edge-tts, FFmpeg concat/amix, ASS subtitles, or PIL final composition.
+
+Use `seedance-fast`, then `kling`, then `grok` only for a failed final node. Return one complete MP4 plus concise QC. Missing/ending BGM, CTA source audio, missing TTS, wrong dimensions, final outside 15–20 seconds, black frames, wrong locale, or subtitle collision is `REROLL`; identity/product loss, policy risk, project isolation failure, or three failed attempts is `BLOCKED`.

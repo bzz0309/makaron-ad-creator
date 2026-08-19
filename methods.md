@@ -26,7 +26,15 @@ Use a small Node launcher for `npx` installation, runtime discovery, Agent Skill
 
 ## Bundle fixed brand assets at the public entrypoint
 
-A fixed CTA must live inside the npm-distributed master Skill, not at a contributor-specific Desktop path. Store the complete source once, record its hash in provenance, expose the local post-process in Agent requests, and append only the configured 2–3 second continuous excerpt with deterministic FFmpeg composition. Keep target-locale TTS out of that branded segment and never ask a generative model to reproduce the logo.
+A fixed CTA must live inside the npm-distributed master Skill, not at a contributor-specific Desktop path. Store the complete source once, record its hash in provenance, and pass it to the project-bound Remotion final node with an explicit trim range. Mute CTA source audio, finish locale TTS before it, and keep the same campaign BGM playing through it. Never ask a generative model to redraw the logo.
+
+## Separate music creation from the localized final render
+
+Generate one instrumental campaign BGM with `makaron music create`, retain both its downloaded artifact and public source URL, and reuse it for every locale. Then use one project-bound Makaron chat per locale to drive internal Remotion for source muting, Seed Audio voiceover, synchronized subtitles, timing, CTA placement, continuous BGM looping, and direct MP4 export. This avoids local edge-tts/ASS/amix drift while keeping the two-input public CLI unchanged.
+
+## Release rollback invariant
+
+Treat every published npm version and matching Git tag/Release as immutable. Before promoting a new `latest`, assign the npm `previous` dist-tag to the outgoing version. Publish the packed tarball plus SHA-256 checksum on the matching GitHub Release, and document both npm rollback and source recovery commands there. Never force-move or delete release tags to simulate a rollback.
 
 ## Derive timing ranges from multiple finished references
 

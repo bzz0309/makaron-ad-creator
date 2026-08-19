@@ -41,7 +41,9 @@ makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 
 这一条命令会自动：查找 Skill 元数据和 ID、首次创建或后续复用该 Skill 的专属 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。
 
-每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但节奏会根据 Skill 动作复杂度在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。TTS 默认使用目标语言的自然年轻女生声；随 npm 包内置完整 Makaron Logo 动画源片，默认由 CLI 用 FFmpeg 把源片 0–3 秒原样内容拼到结尾，不让生成模型重画 Logo。Campaign 使用可跨电脑解析的 `bundled://makaron-logo-cta.mp4`，所以其他 Agent 在新电脑执行一次 `setup` 后也会拥有同一份 CTA 资源，不依赖这台电脑的 Desktop 路径。
+每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但节奏会根据 Skill 动作复杂度在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，让 Agent 内部 Remotion 一次完成全部素材静音、Seed Audio 年轻女声旁白、同步字幕、同一 BGM 从头循环到 CTA 结束，以及完整 MP4 导出。CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。
+
+随 npm 包内置完整 Makaron Logo 动画源片，Campaign 使用可跨电脑解析的 `bundled://makaron-logo-cta.mp4`，所以其他 Agent 在新电脑执行一次 `setup` 后也会拥有同一份 CTA 资源，不依赖这台电脑的 Desktop 路径。Remotion 最终节点读取固定 CTA 源片的配置片段，不让模型重画 Logo。
 
 提交图片即表示图片拥有投放素材制作所需的授权、真人为已授权成年人，且不会用生成结果支持虚假 Claim。这不代表授权自动发布广告。
 
@@ -59,9 +61,10 @@ makaron-ad doctor
 
 - Final ad locales can be any selected subset of English, Japanese, and Hong Kong Cantonese; the default remains all three.
 - App UI mapping is fixed: English uses English, Japanese uses Japanese, and Cantonese uses Traditional Chinese.
-- Final structure is fixed to Hook video → comparison image → workflow video → effect/result video → bundled Logo CTA; default TTS is a young-adult female voice in the selected locale.
+- Final structure is fixed to Hook video → comparison image → workflow video → effect/result video → bundled Logo CTA; one project-bound Makaron chat drives internal Remotion for Seed Audio TTS, synchronized subtitles, CTA placement, and the final mix.
 - Final duration adapts from 15–20 seconds; the shared timing bounds were calibrated from supplied English, Japanese, and Cantonese finished ads rather than forcing every Skill to 18 seconds.
-- The complete 10-second Logo CTA source is bundled for portability; local deterministic post-processing appends only the configured continuous 2–3 second excerpt.
+- The complete 10-second Logo CTA source is bundled for portability; Remotion uses only the configured continuous 2–3 second excerpt, mutes its source audio, and keeps the campaign BGM playing through it.
+- One instrumental BGM is generated per campaign with `makaron music create`, reused for every selected locale, and mixed at relative volume `0.22` from frame zero through the final CTA frame.
 - A Skill is bound to one persistent Makaron project per Agent scope. `--project auto` is rejected.
 - No per-asset approval is required after rights, claims, project binding, and offer are configured. Failed nodes retry independently.
 - Publication is never automatic. Delivered review state is `PAUSED` / human approval required.
