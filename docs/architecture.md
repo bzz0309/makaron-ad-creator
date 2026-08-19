@@ -10,9 +10,11 @@ The distribution layer mirrors the Makaron music-library experience: `npx ... se
 
 ## Why
 
-A single large Skill can describe the workflow, but it cannot reliably retain node status, safely resume after a failed video, enforce one-project binding, validate three locale outputs, or expose portable work requests to another Agent. Those are deterministic control-plane responsibilities and belong in the CLI.
+A single large Skill can describe the workflow, but it cannot reliably retain node status, safely resume after a failed video, enforce one-project binding, validate only the selected locale outputs, or expose portable work requests to another Agent. Those are deterministic control-plane responsibilities and belong in the CLI.
 
 The CLI writes a visible DAG and state file, executes local nodes, and either calls Makaron directly or pauses on a machine-readable request for another Agent. The same campaign can therefore move between agents without re-planning or losing provenance.
+
+The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. Final generation receives explicit roles for the first four parts; the CLI then uses local FFmpeg to append the fixed CTA as part five, avoiding generative brand drift. Target-locale TTS defaults to a young-adult female voice and ends before the CTA.
 
 ```text
 master Skill

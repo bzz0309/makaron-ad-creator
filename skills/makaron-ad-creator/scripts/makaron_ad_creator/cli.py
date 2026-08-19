@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .pipeline import Pipeline, plan_for
-from .schema import campaign_template, validate_config
+from .schema import DEFAULT_AD_LOCALES, DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
 from .util import AdCreatorError, json_candidates, read_json, run, sha256, slug, write_json
 
 
@@ -23,6 +23,14 @@ def _workspace_root() -> Path:
 
 def _makaron_binary() -> str:
     return os.environ.get("MAKARON_AD_MAKARON_BIN", "makaron")
+
+
+def _parse_ad_locales(raw: str | None) -> list[str]:
+    if not raw or raw.strip().lower() == "all":
+        return list(DEFAULT_AD_LOCALES)
+    selected = [value.strip().lower() for value in raw.split(",") if value.strip()]
+    locale_config(selected)
+    return selected
 
 
 def _resolve_marketplace_skill(skill_name: str, binary: str) -> dict:
@@ -84,6 +92,7 @@ def command_make(args: argparse.Namespace) -> int:
     image = Path(args.image).expanduser().resolve()
     if not image.is_file():
         raise AdCreatorError(f"Input image not found: {image}")
+    locales = _parse_ad_locales(args.locales)
     workspace = _workspace_root()
     binary = _makaron_binary()
     skill = _resolve_marketplace_skill(args.skill_name, binary)
@@ -103,6 +112,7 @@ def command_make(args: argparse.Namespace) -> int:
         skill_core=core,
         project_id=project_id,
         subject_description="authorized adult, fictional character, or owned product in the supplied input image",
+        locales=locales,
     )
     config["automation"]["executor"] = "makaron"
     config["automation"]["makaron_binary"] = binary
@@ -118,6 +128,7 @@ def command_make(args: argparse.Namespace) -> int:
         "campaign": str(config_path),
         "project_id": project_id,
         "deliverables": str(campaign_dir / "deliverables"),
+        "locales": locales,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if status == "PASS" else 2
@@ -144,6 +155,7 @@ def command_init(args: argparse.Namespace) -> int:
         skill_core=args.skill_core,
         project_id=args.project_id,
         subject_description=args.subject_description,
+        locales=_parse_ad_locales(args.locales),
     )
     if args.executor:
         config["automation"]["executor"] = args.executor
@@ -151,6 +163,11 @@ def command_init(args: argparse.Namespace) -> int:
         config["catalog_json"] = str(Path(args.catalog_json).expanduser().resolve())
     if args.logo_cta:
         config["assets"]["logo_cta"] = str(Path(args.logo_cta).expanduser().resolve())
+        config["assets"]["logo_cta_start_seconds"] = float(args.logo_cta_start_seconds or 0)
+    elif args.logo_cta_start_seconds is not None:
+        config["assets"]["logo_cta_start_seconds"] = float(args.logo_cta_start_seconds)
+    if args.logo_cta_excerpt_seconds is not None:
+        config["assets"]["logo_cta_excerpt_seconds"] = float(args.logo_cta_excerpt_seconds)
     campaign_dir.mkdir(parents=True, exist_ok=True)
     write_json(config_path, config)
     validate_config(read_json(config_path), config_path)
@@ -234,25 +251,30 @@ def command_doctor(_: argparse.Namespace) -> int:
         "makaron": shutil.which("makaron"),
         "pillow": None,
         "workflow_skill": str(PROJECT_ROOT / "skills" / "edit-makaron-app-workflow-recording" / "SKILL.md"),
+        "fixed_logo_cta": str(DEFAULT_LOGO_CTA),
     }
     try:
         import PIL
         checks["pillow"] = PIL.__version__
     except ImportError:
         pass
-    required = (checks["ffmpeg"], checks["ffprobe"], checks["makaron"], checks["pillow"], Path(checks["workflow_skill"]).is_file())
+    required = (
+        checks["ffmpeg"], checks["ffprobe"], checks["makaron"], checks["pillow"],
+        Path(checks["workflow_skill"]).is_file(), Path(checks["fixed_logo_cta"]).is_file(),
+    )
     checks["pass"] = all(required)
     print(json.dumps(checks, ensure_ascii=False, indent=2))
     return 0 if checks["pass"] else 2
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="makaron-ad", description="One-image to three-locale Makaron ad orchestration")
+    root = argparse.ArgumentParser(prog="makaron-ad", description="One-image to selected-locale Makaron ad orchestration")
     sub = root.add_subparsers(dest="command", required=True)
 
     make = sub.add_parser("make", help="One-command production: INPUT_IMAGE + MARKETPLACE_SKILL_NAME")
     make.add_argument("image")
     make.add_argument("skill_name")
+    make.add_argument("--locale", "--locales", dest="locales", default="all", help="en, ja, yue, a comma-separated subset, or all")
     make.set_defaults(func=command_make)
 
     init = sub.add_parser("init", help="Create a campaign config and deterministic asset plan")
@@ -266,7 +288,10 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--output-dir")
     init.add_argument("--catalog-json")
     init.add_argument("--logo-cta")
+    init.add_argument("--logo-cta-start-seconds", type=float)
+    init.add_argument("--logo-cta-excerpt-seconds", type=float)
     init.add_argument("--executor", choices=("agent", "makaron"), default="agent")
+    init.add_argument("--locale", "--locales", dest="locales", default="all", help="en, ja, yue, a comma-separated subset, or all")
     init.add_argument("--confirm-rights", action="store_true")
     init.add_argument("--force", action="store_true")
     init.set_defaults(func=command_init)

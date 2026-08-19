@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(root, 'bin', 'makaron-ad.mjs');
+const fixedLogoCta = path.join(root, 'skills', 'makaron-ad-creator', 'assets', 'makaron-logo-cta.mp4');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'makaron-ad-npm-smoke-'));
 const env = {...process.env, MAKARON_AD_HOME: temporary};
 
@@ -17,16 +18,21 @@ function invoke(args) {
 }
 
 assert.match(invoke(['help']), /makaron-ad create/);
-assert.equal(invoke(['version']).trim(), '0.3.0');
+assert.equal(invoke(['version']).trim(), '0.4.0');
+assert.equal(fs.existsSync(fixedLogoCta), true);
+assert.ok(fs.statSync(fixedLogoCta).size > 1_000_000);
 
 const drySetup = JSON.parse(invoke(['setup', '--dry-run']));
 assert.equal(drySetup.ok, true);
-assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.3.0');
+assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.4.0');
 assert.equal(drySetup.skill_install.command.includes('makaron-ad-creator'), true);
 
 const dryCreate = JSON.parse(invoke(['create', '--image', '/tmp/input.jpg', '--skill', 'Rainy Kiss', '--dry-run']));
 assert.equal(dryCreate.ok, true);
 assert.deepEqual(dryCreate.outputs, ['en', 'ja', 'yue']);
+
+const dryCantonese = JSON.parse(invoke(['create', '--image', '/tmp/input.jpg', '--skill', 'Screen Burst', '--locale', 'yue', '--dry-run']));
+assert.deepEqual(dryCantonese.outputs, ['yue']);
 
 const setup = JSON.parse(invoke(['setup', '--skip-global-install', '--skip-skill-install']));
 assert.equal(setup.ok, true);

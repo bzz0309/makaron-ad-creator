@@ -2,7 +2,7 @@
 
 ## Goal
 
-Maintain a resumable, one-image-to-three-locale Makaron ad pipeline that can be operated by Makaron or another Agent without per-step human handoffs.
+Maintain a resumable, one-image-to-selected-locale Makaron ad pipeline that can be operated by Makaron or another Agent without per-step human handoffs.
 
 ## Non-negotiable rules
 

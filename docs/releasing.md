@@ -24,10 +24,10 @@ npm publish --access public
 Never commit npm tokens. After publication, verify from a clean directory:
 
 ```bash
-npx -y makaron-ad-creator-cli@0.3.0 setup
+npx -y makaron-ad-creator-cli@0.4.0 setup
 makaron-ad doctor
 ```
 
 ## GitHub
 
-Merge the reviewed release PR, tag the same version as `v0.3.0`, and attach the npm package URL to the GitHub release notes. Do not publish generated ads or credentials as release assets.
+Merge the reviewed release PR, tag the same version as `v0.4.0`, and attach the npm package URL to the GitHub release notes. Do not publish generated ads or credentials as release assets.

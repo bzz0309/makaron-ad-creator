@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import MakaronAdapter, extract_json_object
-from .media import compose_comparison, extract_after_frame, probe_video
+from .media import append_logo_cta, compose_comparison, extract_after_frame, probe_video
 from .prompts import before_prompt, effect_prompt, final_prompt, script_prompt
-from .schema import validate_config
+from .schema import LOCALE_TO_UI, ad_locales, ui_locales, validate_config
 from .util import AdCreatorError, json_candidates, read_json, run, sha256, write_json
 
 
@@ -30,14 +30,15 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "comparison", "kind": "local", "depends_on": ["before", "after"]},
         {"id": "workflow", "kind": "local", "depends_on": ["validate"]},
     ]
-    for locale in ("en", "ja", "yue"):
+    selected_locales = ad_locales(config)
+    for locale in selected_locales:
         nodes.append({
             "id": f"final-{locale}",
             "kind": "generate_video",
             "depends_on": ["scripts", "comparison", "effect", "workflow"],
         })
     nodes += [
-        {"id": "qc", "kind": "local", "depends_on": ["final-en", "final-ja", "final-yue"]},
+        {"id": "qc", "kind": "local", "depends_on": [f"final-{locale}" for locale in selected_locales]},
         {"id": "deliver", "kind": "local", "depends_on": ["qc"]},
     ]
     return nodes
@@ -207,14 +208,18 @@ class Pipeline:
 
     def _generate_scripts(self) -> None:
         result = self._adapter().chat(node_id="scripts", prompt=script_prompt(self.config))
-        scripts = extract_json_object(result["response"])
+        selected_locales = tuple(ad_locales(self.config))
+        scripts = extract_json_object(result["response"], selected_locales)
         self._validate_scripts(scripts)
         output = self.run_dir / "scripts.json"
         write_json(output, scripts)
         self.add_artifact("scripts", output, response_id=result.get("response_id"))
 
     def _validate_scripts(self, scripts: dict[str, Any]) -> None:
-        for locale in ("en", "ja", "yue"):
+        selected_locales = ad_locales(self.config)
+        if set(scripts) != set(selected_locales):
+            raise AdCreatorError(f"scripts must contain only selected locale keys: {', '.join(selected_locales)}")
+        for locale in selected_locales:
             lines = scripts.get(locale)
             if not isinstance(lines, list) or len(lines) != 5 or not all(isinstance(line, str) and line.strip() for line in lines):
                 raise AdCreatorError(f"scripts.{locale} must contain exactly five non-empty strings")
@@ -243,7 +248,7 @@ class Pipeline:
         output_dir = self.run_dir / "workflow"
         command = [
             "python3", str(script), "synthesize", "--skill", self.config["target_skill"]["id"],
-            "--locales", "en,ja,zh-Hant", "--output-dir", str(output_dir),
+            "--locales", ",".join(ui_locales(self.config)), "--output-dir", str(output_dir),
         ]
         if self.config.get("catalog_json"):
             command += ["--catalog-json", self.config["catalog_json"]]
@@ -253,14 +258,19 @@ class Pipeline:
             raise AdCreatorError("Synthetic workflow returned no JSON result")
         parsed = candidates[-1]
         outputs = parsed.get("outputs", [])
-        if len(outputs) != 3:
-            raise AdCreatorError("Synthetic workflow did not return all three UI locales")
+        expected_locales = ui_locales(self.config)
+        returned_locales = [item.get("locale") for item in outputs if isinstance(item, dict)]
+        if len(returned_locales) != len(expected_locales) or set(returned_locales) != set(expected_locales):
+            raise AdCreatorError(
+                "Synthetic workflow returned the wrong UI locales; "
+                f"expected {expected_locales}, got {returned_locales}"
+            )
         manifest = Path(parsed["manifest"])
         artifact = self.add_artifact("workflow", manifest)
         artifact["locale_outputs"] = {item["locale"]: item["output"] for item in outputs}
 
     def _workflow_for(self, ad_locale: str) -> Path:
-        ui_locale = {"en": "en", "ja": "ja", "yue": "zh-Hant"}[ad_locale]
+        ui_locale = LOCALE_TO_UI[ad_locale]
         item = self.state["nodes"]["workflow"]["artifacts"][0]
         path = Path(item["locale_outputs"][ui_locale])
         if not path.is_file():
@@ -269,29 +279,41 @@ class Pipeline:
 
     def _generate_final(self, locale: str, attempt: int) -> None:
         scripts = read_json(self.artifact("scripts"))
+        body = self.run_dir / "final" / f"final-body-{locale}.mp4"
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
         videos = [self.artifact("effect", ".mp4"), self._workflow_for(locale)]
-        if self.config.get("assets", {}).get("logo_cta"):
-            videos.append(Path(self.config["assets"]["logo_cta"]))
         result = self._adapter().chat(
             node_id=f"final-{locale}",
             prompt=final_prompt(self.config, locale, scripts, MODELS[min(attempt - 1, len(MODELS) - 1)]),
             skill_id=self.config.get("automation", {}).get("builder_skill_id") or None,
             images=[self.artifact("comparison")],
             videos=videos,
-            destination=output,
+            destination=body,
+        )
+        append_logo_cta(
+            body,
+            Path(self.config["assets"]["logo_cta"]),
+            output,
+            start_seconds=float(self.config["assets"]["logo_cta_start_seconds"]),
+            excerpt_seconds=float(self.config["assets"]["logo_cta_excerpt_seconds"]),
+            width=int(self.config["output"]["width"]),
+            height=int(self.config["output"]["height"]),
         )
         self.add_artifact(f"final-{locale}", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)])
 
     def _qc(self) -> None:
         expected = self.config["output"]
         report: dict[str, Any] = {"status": "PASS", "locales": {}}
-        for locale in ("en", "ja", "yue"):
+        for locale in ad_locales(self.config):
             info = probe_video(self.artifact(f"final-{locale}", ".mp4"))
             checks = {
                 "dimensions": info["width"] == expected["width"] and info["height"] == expected["height"],
                 "codec": info["codec"] == "h264",
-                "duration": 0 < info["duration"] <= float(expected["duration_seconds"]) + 0.1,
+                "duration": (
+                    float(expected["minimum_duration_seconds"]) - 0.1
+                    <= info["duration"]
+                    <= float(expected["duration_seconds"]) + 0.1
+                ),
                 "audio": info["has_audio"],
                 "size": info["bytes"] <= 50 * 1024 * 1024,
             }
@@ -310,7 +332,7 @@ class Pipeline:
         delivery = self.campaign_dir / "deliverables"
         delivery.mkdir(parents=True, exist_ok=True)
         delivered: list[dict[str, Any]] = []
-        for locale in ("en", "ja", "yue"):
+        for locale in ad_locales(self.config):
             source = self.artifact(f"final-{locale}", ".mp4")
             target = delivery / source.name
             shutil.copy2(source, target)
@@ -320,6 +342,12 @@ class Pipeline:
             "skill_id": self.config["target_skill"]["id"],
             "project_id": self.config["project_binding"]["project_id"],
             "input": {"path": self.config["input_image"], "sha256": sha256(Path(self.config["input_image"]))},
+            "fixed_logo_cta": {
+                "path": self.config["assets"]["logo_cta"],
+                "sha256": sha256(Path(self.config["assets"]["logo_cta"])),
+                "start_seconds": self.config["assets"]["logo_cta_start_seconds"],
+                "excerpt_seconds": self.config["assets"]["logo_cta_excerpt_seconds"],
+            },
             "deliverables": delivered,
             "node_lineage": self.state["nodes"],
             "publication_status": "HUMAN_APPROVAL_REQUIRED",
@@ -340,13 +368,9 @@ class Pipeline:
         shutil.copy2(self.campaign_dir / "plan.json", delivery / "plan.json")
         shutil.copy2(self.campaign_dir / "project-binding.json", delivery / "project-binding.json")
         shutil.copy2(self.artifact("scripts"), delivery / "scripts.json")
-        (delivery / "review.csv").write_text(
-            "locale,technical_status,human_creative_review,publication_status\n"
-            "en,PASS,PENDING,PAUSED\n"
-            "ja,PASS,PENDING,PAUSED\n"
-            "yue,PASS,PENDING,PAUSED\n",
-            encoding="utf-8",
-        )
+        review_rows = ["locale,technical_status,human_creative_review,publication_status"]
+        review_rows.extend(f"{locale},PASS,PENDING,PAUSED" for locale in ad_locales(self.config))
+        (delivery / "review.csv").write_text("\n".join(review_rows) + "\n", encoding="utf-8")
         write_json(delivery / "performance-plan.json", {
             "metrics": ["spend", "impressions", "three_second_views", "clicks", "installs", "ctr", "cpc"],
             "dimensions": ["campaign_id", "skill_id", "locale", "creative_variant", "prompt_hash"],
@@ -390,15 +414,24 @@ class Pipeline:
             locale = node_id.split("-", 1)[1]
             scripts = read_json(self.artifact("scripts"))
             videos = [str(self.artifact("effect", ".mp4")), str(self._workflow_for(locale))]
-            if self.config.get("assets", {}).get("logo_cta"):
-                videos.append(self.config["assets"]["logo_cta"])
             request.update({
                 "operation": "assemble_localized_ad",
                 "locale": locale,
                 "prompt": final_prompt(self.config, locale, scripts, model_preference),
                 "images": [str(self.artifact("comparison"))],
                 "videos": videos,
-                "expected": f"final-artifact-{locale}.mp4",
+                "input_roles": {
+                    "images": ["before_after_comparison"],
+                    "videos": ["effect_result", "localized_workflow"],
+                },
+                "postprocess": {
+                    "operation": "append_fixed_logo_cta",
+                    "handled_by_cli": True,
+                    "source": self.config["assets"]["logo_cta"],
+                    "start_seconds": self.config["assets"]["logo_cta_start_seconds"],
+                    "excerpt_seconds": self.config["assets"]["logo_cta_excerpt_seconds"],
+                },
+                "expected": f"final-body-{locale}.mp4",
             })
         else:
             raise AdCreatorError(f"Agent request is not supported for {node_id}")
@@ -422,7 +455,7 @@ class Pipeline:
         if node_id == "scripts":
             scripts = read_json(artifact)
             self._validate_scripts(scripts)
-        elif node_id in {"effect", "final-en", "final-ja", "final-yue"}:
+        elif node_id == "effect" or node_id.startswith("final-"):
             if artifact.suffix.lower() != ".mp4":
                 raise AdCreatorError(f"{node_id} requires an MP4 artifact")
         elif node_id == "before" and artifact.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
@@ -433,11 +466,26 @@ class Pipeline:
             destination = self.run_dir / "assets" / ("before" + artifact.suffix.lower())
         elif node_id == "effect":
             destination = self.run_dir / "assets" / "effect.mp4"
-        else:
+        elif node_id.startswith("final-"):
             locale = node_id.split("-", 1)[1]
+            body = self.run_dir / "final" / f"final-body-{locale}.mp4"
+            body.parent.mkdir(parents=True, exist_ok=True)
+            if artifact != body.resolve():
+                shutil.copy2(artifact, body)
             destination = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
+            append_logo_cta(
+                body,
+                Path(self.config["assets"]["logo_cta"]),
+                destination,
+                start_seconds=float(self.config["assets"]["logo_cta_start_seconds"]),
+                excerpt_seconds=float(self.config["assets"]["logo_cta_excerpt_seconds"]),
+                width=int(self.config["output"]["width"]),
+                height=int(self.config["output"]["height"]),
+            )
+        else:
+            raise AdCreatorError(f"Unsupported completed Agent node: {node_id}")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if artifact != destination.resolve():
+        if not node_id.startswith("final-") and artifact != destination.resolve():
             shutil.copy2(artifact, destination)
         self.add_artifact(node_id, destination, response_id=response_id)
         state["status"] = "PASS"

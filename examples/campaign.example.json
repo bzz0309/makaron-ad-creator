@@ -30,13 +30,13 @@
     {"ad_locale": "yue", "ui_locale": "zh-Hant"}
   ],
   "style_constraints": ["brand-safe", "identity-stable", "no unsupported claims"],
+  "audio": {"tts_voice": "natural energetic young-adult female"},
   "automation": {
     "executor": "agent",
     "makaron_binary": "makaron",
     "max_attempts": 3,
     "builder_skill_id": ""
   },
-  "assets": {"logo_cta": ""},
-  "output": {"width": 1080, "height": 1920, "duration_seconds": 18.0, "format": "mp4"}
+  "assets": {"logo_cta": "bundled://makaron-logo-cta.mp4", "logo_cta_start_seconds": 0.0, "logo_cta_excerpt_seconds": 3.0},
+  "output": {"width": 1080, "height": 1920, "minimum_duration_seconds": 15.0, "preferred_duration_seconds": 18.0, "duration_seconds": 20.0, "format": "mp4"}
 }
-

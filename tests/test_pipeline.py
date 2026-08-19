@@ -12,7 +12,8 @@ from PIL import Image
 from makaron_ad_creator.media import compose_comparison
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, plan_for
-from makaron_ad_creator.schema import campaign_template, validate_config
+from makaron_ad_creator.prompts import final_prompt
+from makaron_ad_creator.schema import DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
 
@@ -49,6 +50,90 @@ class PipelineTests(unittest.TestCase):
         config["project_binding"]["project_id"] = "auto"
         write_json(path, config)
         with self.assertRaisesRegex(AdCreatorError, "non-auto"):
+            validate_config(read_json(path), path)
+
+    def test_single_cantonese_locale_uses_traditional_chinese_workflow(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["locales"] = locale_config(["yue"])
+        write_json(path, config)
+        validated = validate_config(read_json(path), path)
+        self.assertEqual(validated["locales"], [{"ad_locale": "yue", "ui_locale": "zh-Hant"}])
+        plan = plan_for(validated)
+        node_ids = [node["id"] for node in plan]
+        self.assertIn("final-yue", node_ids)
+        self.assertNotIn("final-en", node_ids)
+        self.assertNotIn("final-ja", node_ids)
+        qc = next(node for node in plan if node["id"] == "qc")
+        self.assertEqual(qc["depends_on"], ["final-yue"])
+
+    def test_all_ad_locales_have_fixed_ui_mapping(self) -> None:
+        self.assertEqual(
+            locale_config(["en", "ja", "yue"]),
+            [
+                {"ad_locale": "en", "ui_locale": "en"},
+                {"ad_locale": "ja", "ui_locale": "ja"},
+                {"ad_locale": "yue", "ui_locale": "zh-Hant"},
+            ],
+        )
+
+    def test_campaign_uses_bundled_fixed_logo_cta(self) -> None:
+        path = self.make_campaign()
+        config = validate_config(read_json(path), path)
+        self.assertEqual(Path(config["assets"]["logo_cta"]), DEFAULT_LOGO_CTA)
+        self.assertTrue(DEFAULT_LOGO_CTA.is_file())
+        self.assertEqual(config["assets"]["logo_cta_excerpt_seconds"], 3.0)
+        self.assertEqual(config["assets"]["logo_cta_start_seconds"], 0.0)
+        self.assertEqual(config["audio"]["tts_voice"], "natural energetic young-adult female")
+        self.assertEqual(config["output"]["minimum_duration_seconds"], 15.0)
+        self.assertEqual(config["output"]["preferred_duration_seconds"], 18.0)
+        self.assertEqual(config["output"]["duration_seconds"], 20.0)
+
+    def test_final_prompt_locks_body_and_young_female_tts(self) -> None:
+        path = self.make_campaign()
+        config = validate_config(read_json(path), path)
+        scripts = {"en": [f"line {index}" for index in range(5)]}
+        prompt = final_prompt(config, "en", scripts)
+        self.assertIn("natural energetic young-adult female", prompt)
+        self.assertIn("LOCKED BODY ORDER", prompt)
+        self.assertIn("Hook video", prompt)
+        self.assertIn("comparison image", prompt)
+        self.assertIn("localized workflow video", prompt)
+        self.assertIn("effect/result video", prompt)
+        self.assertIn("appends the fixed 3.0-second Logo CTA locally", prompt)
+        self.assertIn("12.0-17.0 second four-part body", prompt)
+        self.assertIn("aiming for 15.0 seconds", prompt)
+        self.assertIn("Hook 2.5-5.0s", prompt)
+        self.assertIn("Do not generate a Logo CTA", prompt)
+
+    def test_completed_agent_body_gets_fixed_cta_postprocess(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        pipeline.state["nodes"]["final-en"]["status"] = "WAITING_FOR_AGENT"
+        pipeline.save()
+        body = self.root / "agent-body.mp4"
+        body.write_bytes(b"agent body")
+
+        def fake_append(source: Path, cta: Path, destination: Path, **_: object) -> Path:
+            self.assertEqual(source.name, "final-body-en.mp4")
+            self.assertEqual(cta, DEFAULT_LOGO_CTA)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"body plus fixed cta")
+            return destination
+
+        with patch("makaron_ad_creator.pipeline.append_logo_cta", side_effect=fake_append) as mocked_append:
+            pipeline.complete_agent_node("final-en", body, "response-final")
+        self.assertEqual(mocked_append.call_count, 1)
+        final = pipeline.artifact("final-en", ".mp4")
+        self.assertEqual(final.name, "final-artifact-en.mp4")
+        self.assertEqual(final.read_bytes(), b"body plus fixed cta")
+
+    def test_schema_rejects_wrong_ui_mapping_for_selected_locale(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["locales"] = [{"ad_locale": "yue", "ui_locale": "zh"}]
+        write_json(path, config)
+        with self.assertRaisesRegex(AdCreatorError, "yue->zh-Hant"):
             validate_config(read_json(path), path)
 
     def test_agent_executor_emits_one_request_and_resumes(self) -> None:
@@ -131,6 +216,29 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["target_skill"]["name"], "Rainy Kiss")
         self.assertEqual(config["automation"]["executor"], "makaron")
         self.assertEqual(mocked_run.call_count, 2)
+
+    def test_public_entrypoint_accepts_one_selected_locale(self) -> None:
+        marketplace = {
+            "id": "market-skill-1",
+            "label": "Screen Burst",
+            "description": "make the authorized subject burst through a screen",
+        }
+        responses = [
+            SimpleNamespace(stdout=json.dumps(marketplace), stderr="", returncode=0),
+            SimpleNamespace(stdout="ID: project-created-1\n", stderr="", returncode=0),
+        ]
+        with patch.dict("os.environ", {"MAKARON_AD_WORKSPACE": str(self.root), "MAKARON_AD_MAKARON_BIN": "fake-makaron"}), \
+             patch("makaron_ad_creator.cli.run", side_effect=responses), \
+             patch("makaron_ad_creator.cli.Pipeline.run", return_value="PASS"):
+            self.assertEqual(main([str(self.image), "Screen Burst", "--locale", "yue"]), 0)
+        config_path = next((self.root / "campaigns").glob("*/campaign.json"))
+        config = read_json(config_path)
+        self.assertEqual(config["locales"], [{"ad_locale": "yue", "ui_locale": "zh-Hant"}])
+
+    def test_public_entrypoint_rejects_unknown_locale_before_external_calls(self) -> None:
+        with patch("makaron_ad_creator.cli.run") as mocked_run:
+            self.assertEqual(main([str(self.image), "Screen Burst", "--locale", "fr"]), 2)
+        mocked_run.assert_not_called()
 
 
 if __name__ == "__main__":

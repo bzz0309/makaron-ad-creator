@@ -1,6 +1,6 @@
 ---
 name: makaron-ad-creator
-description: Fully orchestrate a rights-cleared input image and one Makaron Marketplace Skill into resumable English, Japanese, and Cantonese vertical ad videos. Use when an Agent or Makaron must plan, generate, localize, QC, resume, or package the complete ad chain without per-step human handoffs; also use for one-image ad campaigns, three-language delivery, synthetic Makaron workflow demos, or CLI-driven cross-Agent execution.
+description: Fully orchestrate a rights-cleared input image and one Makaron Marketplace Skill into resumable English, Japanese, and/or Cantonese vertical ad videos. Use when an Agent or Makaron must generate one selected locale or a locale subset, localize the matching App workflow, QC, resume, or package the complete ad chain without per-step human handoffs.
 allowed-tools: [generate_video, analyze_image]
 metadata:
   makaron:
@@ -16,7 +16,7 @@ metadata:
 
 ## Core concept
 
-Accept exactly two user inputs—one owned/licensed image and one Makaron Marketplace Skill name—then run a resumable asset DAG that produces English, Japanese, and Hong Kong Cantonese ads. Resolve every other field automatically, keep generation in one persistent project bound to that Skill, generate the App workflow deterministically from Marketplace metadata, and package prompts, hashes, QC, and three final MP4s.
+Accept two required user inputs—one owned/licensed image and one Makaron Marketplace Skill name—and an optional locale selection. Run a resumable asset DAG that produces only the selected English, Japanese, and/or Hong Kong Cantonese ads. Keep generation in one persistent project bound to that Skill, generate only the matching App workflow locales, and package prompts, hashes, QC, and the selected final MP4s. Default to all three ad locales when no locale is supplied.
 
 Use the bundled project CLI as the state owner. Do not improvise a parallel ad workflow in chat.
 
@@ -26,8 +26,9 @@ Use the bundled project CLI as the state owner. Do not improvise a parallel ad w
 |---|:---:|---|---|
 | `input_image` | ✅ | file | Owned/licensed person, character, or product image |
 | `skill_name` | ✅ | string | Exact or resolvable Makaron Marketplace Skill name |
+| `locale` | 否 | `en`, `ja`, `yue`, `all`, or comma-separated subset | Ad language selection; defaults to `all` |
 
-Do not ask the user for Skill ID, project ID, language mapping, Campaign JSON, output size, prompts, CTA asset, recording, or per-step confirmation. Resolve or default them internally.
+Do not ask the user for Skill ID, project ID, language mapping, Campaign JSON, output size, prompts, CTA asset, recording, voice selection, or per-step confirmation. Resolve the fixed mapping internally: `en→en`, `ja→ja`, `yue→zh-Hant`. Use the bundled fixed Makaron Logo CTA source and default TTS to a natural energetic young-adult female voice.
 
 Example user request:
 
@@ -65,10 +66,10 @@ Three failures, identity/product loss, prompt drift, or unresolved policy risk �
 
 1. Validate rights, claims, input, locales, output, binaries, and the Skill↔project registry.
 2. Write `plan.json` and initialize resumable `state.json`.
-3. Generate five-line culturally adapted `en/ja/yue` script JSON.
+3. Generate five-line culturally adapted script JSON for only the selected ad locales.
 4. Generate a neutral ordinary Before image, invoke the target Skill for the effect video, extract an After frame, and compose a black-background side-by-side comparison locally.
-5. Run `edit-makaron-app-workflow-recording` in synthetic mode for `en/ja/zh-Hant`; map Cantonese voiceover to the `zh-Hant` UI video.
-6. Assemble three ads with the same timing and creative mechanism. Generate natural locale TTS, one subtitle track, instrumental BGM, and CTA inside the bound project.
+5. Run `edit-makaron-app-workflow-recording` only for the selected UI locales: English uses `en`, Japanese uses `ja`, and Cantonese uses `zh-Hant`.
+6. Generate the first four parts only in the bound project: Hook video → comparison image → locale-correct workflow video → effect/result video. Generate natural locale TTS with the configured voice, defaulting to a young-adult female voice, plus one subtitle track and instrumental BGM. Adapt the first-four-part body within 12–17 seconds: 2.5–5 second Hook, about 2.5 second comparison, about 4 second workflow, and at least 3 seconds of complete result. Then have the CLI append the configured 2–3 second excerpt of the bundled fixed Makaron Logo CTA locally with FFmpeg as part five. Never ask a model to reproduce the Logo CTA.
 7. Run technical QC, then package MP4s, scripts, plan, prompts, project binding, review gate, provenance, and performance plan. Publication remains human-approved and paused by default.
 
 ## CLI protocol
@@ -86,7 +87,13 @@ Expose only this generation command to the user:
 makaron-ad create --image /owned/input.jpg --skill "Marketplace Skill Name"
 ```
 
-The CLI automatically calls `makaron skills show`, resolves the Skill ID/core metadata, creates or reuses its persistent project, writes the campaign config, and runs the full pipeline. Return only the final status and deliverables path.
+Generate only Cantonese with a Traditional-Chinese workflow recording:
+
+```bash
+makaron-ad create --image /owned/input.jpg --skill "Marketplace Skill Name" --locale yue
+```
+
+The CLI automatically calls `makaron skills show`, resolves the Skill ID/core metadata, creates or reuses its persistent project, writes the campaign config, and runs the locale-scoped pipeline. Return only the final status and deliverables path.
 
 For another Agent, use `--executor agent`. The CLI emits one `run/requests/<node>.json` at a time. Execute exactly that request in the bound project, then attach the result and resume:
 
@@ -101,13 +108,15 @@ Read [executor-protocol.md](references/executor-protocol.md) for request semanti
 
 Use the English templates in `scripts/makaron_ad_creator/prompts.py`. Fill placeholders only. Do not translate, rewrite, reorder, add, or remove template sections before execution. Save every filled prompt under `run/prompts/` and compile them into `deliverables/prompt_used.md`.
 
-The five fixed final beats are: outcome Hook → simultaneous Before/After → truthful localized workflow demo → full result → CTA. Keep the same mechanism and timing across locales; adapt language and voice, not the experiment design.
+The five fixed final beats are: outcome Hook video → simultaneous Before/After comparison image → truthful localized workflow video → full effect/result video → fixed Makaron Logo CTA video. Keep the same order and timing bounds across locales; allow exact beat lengths to adapt to the Skill mechanism and natural speech. TTS defaults to a natural energetic young-adult female voice in the target locale. The default local post-process takes the bundled CTA source from 0.0s through 3.0s, preserves its content and source audio, and never places TTS over it.
+
+Read [reference-editing-rhythm.md](references/reference-editing-rhythm.md) only when changing timing, duration QC, subtitle placement, or CTA selection.
 
 ## QC
 
 | Result | Condition | Action |
 |---|---|---|
-| `PASS` | Three 1080×1920 H.264/AAC MP4s ≤18s; result first; Before/After coexist; identity/product stable; correct UI locale; readable single subtitles; natural language; audio present; provenance complete | Deliver to human review |
+| `PASS` | Every selected 1080×1920 H.264/AAC MP4 is 15–20s; result first; Before/After coexist; identity/product stable; correct UI locale; readable single subtitles; natural language; audio present; provenance complete | Deliver to human review |
 | `REROLL` | Recoverable node-level face/hand drift, subtitle collision, timing issue, failed download, or literal localization | Retry only that node with the next model |
 | `BLOCKED` | Rights/claims unclear, prohibited content, project isolation broken, missing required Marketplace data, subject/product lost, prompt drift, or budget exhausted | Stop and report exact node/error |
 
@@ -115,9 +124,7 @@ Technical QC cannot prove creative truthfulness or locale naturalness. Keep `rev
 
 ## Outputs
 
-- `final-artifact-en.mp4`
-- `final-artifact-ja.mp4`
-- `final-artifact-yue.mp4`
+- `final-artifact-<selected-locale>.mp4` for each requested locale
 - `plan.json`, `scripts.json`, `prompt_used.md`
 - `qc_report.md`, `review.csv`, `review.md`
 - `provenance.json`, `performance-plan.json`, `project-binding.json`
