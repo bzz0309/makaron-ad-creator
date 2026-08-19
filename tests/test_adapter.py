@@ -7,10 +7,63 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from makaron_ad_creator.adapter import MakaronAdapter, extract_json_object
+from makaron_ad_creator.adapter import (
+    MakaronAdapter,
+    extract_generated_video_urls,
+    extract_json_object,
+    extract_remotion_design,
+)
+from makaron_ad_creator.util import AdCreatorError
 
 
 class AdapterTests(unittest.TestCase):
+    def test_generated_video_urls_exclude_uploaded_source_attachments(self) -> None:
+        response = {
+            "media_urls": ["https://example.com/uploaded-cta.mp4"],
+            "output": [{"type": "text", "content": "export was Forbidden"}],
+            "result": {"videos": [], "designs": [{"snapshotId": "draft-1"}]},
+        }
+        self.assertEqual(extract_generated_video_urls(response), [])
+
+    def test_generated_video_urls_accept_authoritative_result_video(self) -> None:
+        response = {
+            "output": [{"type": "video", "status": "completed", "url": "https://example.com/final.mp4"}],
+            "result": {"videos": [{"videoUrl": "https://example.com/final.mp4"}]},
+        }
+        self.assertEqual(extract_generated_video_urls(response), ["https://example.com/final.mp4"])
+
+    def test_extract_remotion_design_accepts_completed_design_payload(self) -> None:
+        design = {
+            "snapshotId": "snapshot-1",
+            "code": "function Composition() { return null; }",
+            "props": {},
+            "animation": {"fps": 30, "durationInSeconds": 18},
+        }
+        self.assertEqual(extract_remotion_design({"result": {"designs": [design]}}), design)
+
+    def test_final_chat_rejects_source_video_when_export_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            raw = {
+                "responseId": "response-1",
+                "uploadedVideo": "https://example.com/uploaded-cta.mp4",
+                "output": [{"type": "text", "content": "Forbidden"}],
+                "result": {"videos": [], "designs": [{"snapshotId": "draft-1"}]},
+            }
+            with patch("makaron_ad_creator.adapter.run", return_value=SimpleNamespace(stdout=json.dumps(raw), stderr="", returncode=0)):
+                with self.assertRaisesRegex(AdCreatorError, "no exported final MP4"):
+                    adapter.chat(
+                        node_id="final-en",
+                        prompt="export",
+                        destination=root / "final.mp4",
+                        require_generated_video=True,
+                    )
+            self.assertTrue((root / "run" / "responses" / "final-en.json").is_file())
+
     def test_extract_json_object_accepts_selected_locale_subset(self) -> None:
         response = {"result": {"text": '{"yue":["一","二","三","四","五"]}'}}
         scripts = extract_json_object(response, ("yue",))

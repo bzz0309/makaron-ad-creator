@@ -36,6 +36,14 @@ Generate one instrumental campaign BGM with `makaron music create`, retain both 
 
 Treat every published npm version and matching Git tag/Release as immutable. Before promoting a new `latest`, assign the npm `previous` dist-tag to the outgoing version. Publish the packed tarball plus SHA-256 checksum on the matching GitHub Release, and document both npm rollback and source recovery commands there. Never force-move or delete release tags to simulate a rollback.
 
+## Persist credentials in the operating-system keychain
+
+Do not make long-running or resumable Agents request the same API key for every process. Verify it once, store it in the current user's macOS Keychain, and inject it only into child-process memory. Environment variables can override the saved credential for automation, and logout must delete the keychain item. Never put a live key in command documentation, project JSON, state, logs, tests, or Git.
+
+## Distinguish generated outputs from uploaded attachments
+
+Media URLs found anywhere in an Agent response are not automatically outputs: prompts, events, and response payloads can repeat source-attachment URLs. Final delivery must come from authoritative generated video fields such as `output[type=video]` or `result.videos`. If the Agent returns a complete Remotion design but platform materialization fails, validate the bounded composition and render that same design with pinned Remotion dependencies; keep local TTS, subtitle reconstruction, and FFmpeg audio assembly forbidden.
+
 ## Derive timing ranges from multiple finished references
 
 Do not turn one finished ad into a universal frame chart. Measure several examples, keep the common order fixed, and encode only stable ranges: Hook 2.5–5 seconds, comparison about 2.5 seconds, workflow about 4 seconds, result 3–7 seconds, CTA 2–3 seconds, and total 15–20 seconds. Let mechanism clarity—not locale alone—choose the exact duration.

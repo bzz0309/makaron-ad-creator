@@ -6,7 +6,7 @@ Use one master Skill for discovery and operating policy, a Python CLI for execut
 
 Only the master Skill/CLI is public. The npm package retains the user's original five folders for internal modularity, but `setup` installs only the master Skill. The user supplies only `input image + Marketplace Skill name`; the CLI resolves metadata and project state automatically.
 
-The distribution layer mirrors the Makaron music-library experience: `npx ... setup` installs a global command and Agent Skill. The Node launcher owns portable installation and discovers bundled Makaron CLI, FFmpeg, FFprobe, and a private Python/Pillow environment; the existing Python core continues to own campaign semantics and resumable state.
+The distribution layer mirrors the Makaron music-library experience: `npx ... setup` installs a global command and Agent Skill. The Node launcher owns portable installation, one-time macOS Keychain login, and discovery of the bundled Makaron CLI, FFmpeg, FFprobe, and private Python/Pillow environment; the existing Python core continues to own campaign semantics and resumable state. Saved credentials are injected only into child-process memory and never enter campaign state or repository files.
 
 ## Why
 
@@ -14,7 +14,7 @@ A single large Skill can describe the workflow, but it cannot reliably retain no
 
 The CLI writes a visible DAG and state file, executes local nodes, and either calls Makaron directly or pauses on a machine-readable request for another Agent. The same campaign can therefore move between agents without re-planning or losing provenance.
 
-The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. A dedicated `bgm` DAG node calls `makaron music create` once and reuses that audio across locales. Each final node sends the comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat`; the Agent's internal Remotion workflow mutes all source video audio, generates Seed Audio TTS, burns synchronized subtitles, loops the BGM through CTA, and directly exports the complete MP4. Local FFmpeg remains a probe/compression dependency, not the final concat/amix/subtitle engine.
+The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. A dedicated `bgm` DAG node calls `makaron music create` once and reuses that audio across locales. Each final node sends the comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat`; the Agent's internal Remotion workflow mutes all source video audio, generates Seed Audio TTS, burns synchronized subtitles, loops the BGM through CTA, and directly exports the complete MP4. Only authoritative generated video outputs can satisfy the node. If Makaron's export endpoint rejects an otherwise complete design, the CLI validates the returned code contract and uses its pinned Remotion renderer to export the identical design locally. Local FFmpeg remains a probe/compression dependency, not the final concat/amix/subtitle engine.
 
 ```text
 master Skill

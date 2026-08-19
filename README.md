@@ -15,6 +15,8 @@ makaron-ad login
 
 `setup` 会一次完成：安装全局 `makaron-ad` 命令、安装 Makaron CLI 与 FFmpeg/FFprobe 运行依赖、建立私有 Python/Pillow 环境，并把唯一入口 Skill `makaron-ad-creator` 安装到当前 Agent。无需手工复制本仓库，也无需把五个子 Skill 分别装一遍。
 
+`makaron-ad login` 只需执行一次：CLI 会先校验 API key，再保存进当前 Mac 用户的系统钥匙串。此后用户和其他 Agent 执行 `create`、`run`、`credits` 时会自动读取，不会反复询问，也不会把 key 写进项目、配置 JSON、日志或 Git。需要更换账号时运行 `makaron-ad logout`，再重新 `makaron-ad login`。
+
 ## 唯一公开用法
 
 ```bash
@@ -41,7 +43,7 @@ makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 
 这一条命令会自动：查找 Skill 元数据和 ID、首次创建或后续复用该 Skill 的专属 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。
 
-每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但节奏会根据 Skill 动作复杂度在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，让 Agent 内部 Remotion 一次完成全部素材静音、Seed Audio 年轻女声旁白、同步字幕、同一 BGM 从头循环到 CTA 结束，以及完整 MP4 导出。CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。
+每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但节奏会根据 Skill 动作复杂度在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，让 Agent 内部 Remotion 一次完成全部素材静音、Seed Audio 年轻女声旁白、同步字幕、同一 BGM 从头循环到 CTA 结束，以及完整 MP4 导出。CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。如果 Makaron 已生成且视觉 QA 通过的 Remotion design 因平台 `Forbidden` 无法 materialize，CLI 会安全校验并用固定版本 Remotion 在本机渲染同一份 design；不会重新做 TTS、字幕或音频混合，也不会误把上传的 CTA/素材附件当成最终视频。
 
 随 npm 包内置完整 Makaron Logo 动画源片，Campaign 使用可跨电脑解析的 `bundled://makaron-logo-cta.mp4`，所以其他 Agent 在新电脑执行一次 `setup` 后也会拥有同一份 CTA 资源，不依赖这台电脑的 Desktop 路径。Remotion 最终节点读取固定 CTA 源片的配置片段，不让模型重画 Logo。
 
@@ -67,6 +69,7 @@ makaron-ad doctor
 - One instrumental BGM is generated per campaign with `makaron music create`, reused for every selected locale, and mixed at relative volume `0.22` from frame zero through the final CTA frame.
 - A Skill is bound to one persistent Makaron project per Agent scope. `--project auto` is rejected.
 - No per-asset approval is required after rights, claims, project binding, and offer are configured. Failed nodes retry independently.
+- Final nodes accept only newly generated video outputs, never uploaded source attachments. A valid Makaron Remotion design can be rendered by the bundled local Remotion fallback when the platform exporter is unavailable; the same design props, Seed Audio voiceover, captions, and BGM are preserved.
 - Publication is never automatic. Delivered review state is `PAUSED` / human approval required.
 - Synthetic workflow generation comes from the supplied v5 iOS implementation and live/offline Marketplace metadata. It is never labeled as genuine screen recording.
 

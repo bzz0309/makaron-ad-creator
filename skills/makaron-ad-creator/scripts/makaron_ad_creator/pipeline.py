@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, extract_json_object
+from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design
 from .media import bgm_similarity_in_cta, compose_comparison, extract_after_frame, probe_audio, probe_video
 from .prompts import before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import LOCALE_TO_UI, ad_locales, ui_locales, validate_config
@@ -313,15 +313,49 @@ class Pipeline:
             self._workflow_for(locale),
             Path(self.config["assets"]["logo_cta"]),
         ]
-        result = self._adapter().chat(
-            node_id=f"final-{locale}",
-            prompt=final_prompt(self.config, locale, scripts, MODELS[min(attempt - 1, len(MODELS) - 1)]),
-            skill_id=self.config.get("automation", {}).get("builder_skill_id") or None,
-            images=[self.artifact("comparison")],
-            videos=videos,
-            audios=[self._bgm_input()],
-            destination=output,
+        node_id = f"final-{locale}"
+        adapter = self._adapter()
+        cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
+        cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
+        if attempt == 1 and cached_response and extract_remotion_design(cached_response):
+            fallback = adapter.render_remotion_fallback(node_id, cached_response, output)
+            result = {
+                "response_id": cached_response.get("response_id"),
+                "render_fallback": fallback,
+            }
+        else:
+            result = adapter.chat(
+                node_id=node_id,
+                prompt=final_prompt(self.config, locale, scripts, MODELS[min(attempt - 1, len(MODELS) - 1)]),
+                skill_id=self.config.get("automation", {}).get("builder_skill_id") or None,
+                images=[self.artifact("comparison")],
+                videos=videos,
+                audios=[self._bgm_input()],
+                destination=output,
+                require_generated_video=True,
+            )
+        info = probe_video(output)
+        expected = self.config["output"]
+        similarity = bgm_similarity_in_cta(
+            output,
+            self.artifact("bgm"),
+            float(self.config["assets"]["logo_cta_excerpt_seconds"]),
         )
+        final_checks = {
+            "dimensions": info["width"] == expected["width"] and info["height"] == expected["height"],
+            "codec": info["codec"] == "h264",
+            "duration": (
+                float(expected["minimum_duration_seconds"]) - 0.1
+                <= info["duration"]
+                <= float(expected["duration_seconds"]) + 0.1
+            ),
+            "audio": info["has_audio"],
+            "continuous_bgm_through_cta": similarity >= 0.55,
+            "size": info["bytes"] <= 50 * 1024 * 1024,
+        }
+        if not all(final_checks.values()):
+            failed = ", ".join(name for name, passed in final_checks.items() if not passed)
+            raise AdCreatorError(f"Generated final failed preflight and must be rerolled: {failed}")
         self.add_artifact(
             f"final-{locale}",
             output,
@@ -332,6 +366,7 @@ class Pipeline:
             continuous_bgm_sha256=sha256(self.artifact("bgm")),
             composition_engine="makaron-agent-remotion",
             tts_engine="seed-audio",
+            render_fallback=result.get("render_fallback"),
         )
 
     def _qc(self) -> None:

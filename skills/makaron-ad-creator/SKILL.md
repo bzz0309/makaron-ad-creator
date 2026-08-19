@@ -70,7 +70,7 @@ Three failures, identity/product loss, prompt drift, or unresolved policy risk â
 4. Generate a neutral ordinary Before image, invoke the target Skill for the effect video, extract an After frame, and compose a black-background side-by-side comparison locally.
 5. Run `edit-makaron-app-workflow-recording` only for the selected UI locales: English uses `en`, Japanese uses `ja`, and Cantonese uses `zh-Hant`.
 6. Call `makaron music create` once to generate an original instrumental BGM of at least 20 seconds with no early fade-out. Reuse that exact BGM asset for every selected locale.
-7. For each locale, issue one bound-project `makaron chat` request with the comparison image, effect video, locale-correct workflow video, fixed CTA source, BGM, and five script lines. Require the Makaron Agent's internal Remotion workflow to mute every source video (including CTA), create one continuous Seed Audio young-female TTS take, burn one synchronized top-safe subtitle set, loop the same BGM from frame zero through CTA, and directly export the complete five-part MP4. Do not use local edge-tts, FFmpeg concat/amix, ASS subtitle rendering, or PIL final composition.
+7. For each locale, issue one bound-project `makaron chat` request with the comparison image, effect video, locale-correct workflow video, fixed CTA source, BGM, and five script lines. Require the Makaron Agent's internal Remotion workflow to mute every source video (including CTA), create one continuous Seed Audio young-female TTS take, burn one synchronized top-safe subtitle set, loop the same BGM from frame zero through CTA, and directly export the complete five-part MP4. Accept only a newly generated video result, never an uploaded source attachment. If platform materialization is unavailable but the response contains a complete, bounded, QA-passed Remotion design, validate it and render that same design through the bundled local Remotion fallback. Do not use local edge-tts, FFmpeg concat/amix, ASS subtitle rendering, or PIL final composition.
 8. Run technical QC, then package MP4s, BGM source, scripts, plan, prompts, project binding, review gate, provenance, and performance plan. Publication remains human-approved and paused by default.
 
 ## CLI protocol
@@ -81,6 +81,8 @@ Use the globally installed CLI. If it is missing on a new machine, install the p
 npx -y makaron-ad-creator-cli setup
 makaron-ad login
 ```
+
+`makaron-ad login` is a one-time Mac setup step: validate the key, save it in macOS Keychain, and let later user or Agent commands load it automatically. Never ask for the key again while the keychain entry is valid. Use `makaron-ad logout` only when the user asks to remove or replace the saved credential. Never place the key in prompts, campaign files, logs, or Git.
 
 Expose only this generation command to the user:
 

@@ -134,15 +134,44 @@ def extract_response_id(value: Any) -> str | None:
 
 def download(url: str, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": "makaron-ad-creator/0.1"})
+    temp_path: Path | None = None
     try:
-        with urllib.request.urlopen(request, timeout=120) as response, tempfile.NamedTemporaryFile(
-            dir=destination.parent, delete=False
-        ) as handle:
-            shutil.copyfileobj(response, handle)
+        with tempfile.NamedTemporaryFile(dir=destination.parent, delete=False) as handle:
             temp_path = Path(handle.name)
+        curl = shutil.which("curl")
+        if curl:
+            run([
+                curl,
+                "--fail",
+                "--location",
+                "--silent",
+                "--show-error",
+                "--retry",
+                "3",
+                "--retry-delay",
+                "1",
+                "--connect-timeout",
+                "30",
+                "--max-time",
+                "600",
+                "--user-agent",
+                "makaron-ad-creator/0.5.1",
+                "--output",
+                str(temp_path),
+                url,
+            ], timeout=660)
+        else:
+            request = urllib.request.Request(url, headers={"User-Agent": "makaron-ad-creator/0.5.1"})
+            with urllib.request.urlopen(request, timeout=120) as response, temp_path.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
     except Exception as exc:
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
         raise AdCreatorError(f"Cannot download generated artifact: {exc}") from exc
+    if temp_path is None or not temp_path.is_file() or temp_path.stat().st_size == 0:
+        if temp_path:
+            temp_path.unlink(missing_ok=True)
+        raise AdCreatorError("Cannot download generated artifact: downloaded file is empty")
     temp_path.replace(destination)
     return destination
 

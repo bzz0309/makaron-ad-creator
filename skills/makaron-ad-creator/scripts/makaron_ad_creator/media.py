@@ -129,7 +129,10 @@ def bgm_similarity_in_cta(final_video: Path, bgm: Path, cta_seconds: float) -> f
     final_values = [value - final_mean for value in final_values]
     bgm_values = [value - bgm_mean for value in bgm_values]
     best = 0.0
-    for lag in range(-160, 161, 8):
+    # AAC/container padding can shift the rendered mix by several dozen milliseconds.
+    # Search ±100ms so an otherwise identical continuous BGM is not rejected solely
+    # because the MP4 duration has a small encoder tail.
+    for lag in range(-800, 801, 8):
         if lag >= 0:
             left = final_values[lag:]
             right = bgm_values[:count - lag]
