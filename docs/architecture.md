@@ -4,7 +4,9 @@
 
 Use one master Skill for discovery and operating policy, a Python CLI for execution state, and small child Skills/adapters for bounded creative nodes.
 
-Only the master Skill/CLI is public. The package retains the user's original five folders for internal modularity, but the user supplies only `input image + Marketplace Skill name`. The CLI resolves metadata and project state automatically.
+Only the master Skill/CLI is public. The npm package retains the user's original five folders for internal modularity, but `setup` installs only the master Skill. The user supplies only `input image + Marketplace Skill name`; the CLI resolves metadata and project state automatically.
+
+The distribution layer mirrors the Makaron music-library experience: `npx ... setup` installs a global command and Agent Skill. The Node launcher owns portable installation and discovers bundled Makaron CLI, FFmpeg, FFprobe, and a private Python/Pillow environment; the existing Python core continues to own campaign semantics and resumable state.
 
 ## Why
 
@@ -15,7 +17,9 @@ The CLI writes a visible DAG and state file, executes local nodes, and either ca
 ```text
 master Skill
     ↓ policy + input contract
-makaron-ad CLI
+global makaron-ad Node launcher
+    ↓ portable runtime + bundled dependencies
+Python orchestration core
     ├── local: validate / After frame / comparison / synthetic UI / QC / package
     ├── Makaron: script / Before / target-Skill effect / localized final
     └── Agent protocol: request.json → artifact → complete → resume

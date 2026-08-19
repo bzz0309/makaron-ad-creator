@@ -73,10 +73,17 @@ Three failures, identity/product loss, prompt drift, or unresolved policy risk â
 
 ## CLI protocol
 
-From the project root, expose only this command to the user:
+Use the globally installed CLI. If it is missing on a new machine, install the package and this Skill together:
 
 ```bash
-bin/makaron-ad /owned/input.jpg "Marketplace Skill Name"
+npx -y makaron-ad-creator-cli setup
+makaron-ad login
+```
+
+Expose only this generation command to the user:
+
+```bash
+makaron-ad create --image /owned/input.jpg --skill "Marketplace Skill Name"
 ```
 
 The CLI automatically calls `makaron skills show`, resolves the Skill ID/core metadata, creates or reuses its persistent project, writes the campaign config, and runs the full pipeline. Return only the final status and deliverables path.
@@ -84,8 +91,8 @@ The CLI automatically calls `makaron skills show`, resolves the Skill ID/core me
 For another Agent, use `--executor agent`. The CLI emits one `run/requests/<node>.json` at a time. Execute exactly that request in the bound project, then attach the result and resume:
 
 ```bash
-bin/makaron-ad complete <campaign.json> --node <node-id> --artifact <file> --response-id <id>
-bin/makaron-ad run <campaign.json> --executor agent
+makaron-ad complete <campaign.json> --node <node-id> --artifact <file> --response-id <id>
+makaron-ad run <campaign.json> --executor agent
 ```
 
 Read [executor-protocol.md](references/executor-protocol.md) for request semantics and recovery. Read [campaign-schema.md](references/campaign-schema.md) only when editing campaign JSON directly.

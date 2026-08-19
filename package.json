@@ -1,0 +1,46 @@
+{
+  "name": "makaron-ad-creator-cli",
+  "version": "0.3.0",
+  "description": "Portable one-image to three-locale Makaron ad creator CLI for AI agents",
+  "type": "module",
+  "bin": {
+    "makaron-ad": "bin/makaron-ad.mjs",
+    "makaron-ad-creator-cli": "bin/makaron-ad.mjs"
+  },
+  "scripts": {
+    "test": "PYTHONDONTWRITEBYTECODE=1 node tests/npm-smoke.mjs && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=skills/makaron-ad-creator/scripts python3 -m unittest discover -s tests -v",
+    "pack:check": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "makaron-cli": "^0.13.4"
+  },
+  "files": [
+    "bin/makaron-ad.mjs",
+    "skills/",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "makaron",
+    "advertising",
+    "video",
+    "localization",
+    "ai-agent",
+    "skill"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bzz0309/makaron-ad-creator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bzz0309/makaron-ad-creator/issues"
+  },
+  "homepage": "https://github.com/bzz0309/makaron-ad-creator#readme"
+}

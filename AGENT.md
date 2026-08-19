@@ -17,8 +17,9 @@ Maintain a resumable, one-image-to-three-locale Makaron ad pipeline that can be 
 ## Preferred commands
 
 - Search with `rg` / `rg --files`.
-- Run `bin/makaron-ad doctor` before live execution.
-- Run tests with `PYTHONPATH=skills/makaron-ad-creator/scripts python3 -m unittest discover -s tests -v`.
+- Run `makaron-ad doctor` before live execution (`bin/makaron-ad doctor` is the source-tree fallback).
+- Keep `npx -y makaron-ad-creator-cli setup` idempotent: it owns global CLI installation, the private Python/Pillow runtime, bundled media binaries, and installation of only the master Agent Skill.
+- Run the complete suite with `npm test`, then verify package contents with `npm run pack:check`.
 - Validate the main Skill with the system `quick_validate.py` script.
 
 ## Test expectations
