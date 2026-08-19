@@ -14,6 +14,11 @@
 - `automation.max_attempts`: maximum `3`.
 - `automation.builder_skill_id`: optional installed Marketplace builder Skill; empty uses a bound-project chat assembly brief.
 - `audio.tts_voice`: defaults to `natural energetic young-adult female`.
+- `audio.bgm_prompt`: original instrumental direction for the campaign's one `makaron music create` node; defaults to at least 20 seconds, no vocals, no early fade-out, and loop-friendly.
+- `audio.bgm_style`: `--style` value for `makaron music create`.
+- `audio.bgm_volume`: Remotion relative mix volume under TTS, default `0.22` and maximum `0.5`.
+- `audio.mute_source_audio`: forced to `true`.
+- `audio.cta_source_audio`: forced to `false`.
 - `assets.logo_cta`: defaults to portable URI `bundled://makaron-logo-cta.mp4`, resolved to the fixed source inside the currently installed CLI; an explicit path overrides it.
 - `assets.logo_cta_start_seconds`: deterministic excerpt start, default `0`, matching the supplied finished-ad references.
 - `assets.logo_cta_excerpt_seconds`: final CTA excerpt duration from `2` through `3`, default `3`.
@@ -23,7 +28,7 @@
 
 `catalog_json` is optional. When supplied, synthetic workflow generation is offline and reproducible. Without it, the workflow renderer reads the live Marketplace catalog with `makaron skills list --json`.
 
-The final assembly order is fixed: Hook video → comparison image → localized workflow video → effect/result video → bundled Logo CTA video. Voiceover defaults to a natural energetic young-adult female voice and must finish before the CTA excerpt. The Agent generates only the first four parts; the CLI appends the configured CTA excerpt locally with FFmpeg so no model can redraw the brand asset.
+The final assembly order is fixed: Hook video → comparison image → localized workflow video → effect/result video → bundled Logo CTA video. Voiceover defaults to a natural energetic young-adult female Seed Audio voice and must finish before the CTA excerpt. One BGM is generated separately with `makaron music create`, then passed with every visual asset to one project-bound `makaron chat` request. The Agent's internal Remotion workflow mutes all video source audio, loops that BGM through CTA, burns synchronized subtitles, and directly exports the complete MP4. There is no local final concat/amix/ASS/PIL stage.
 
 Timing is adaptive within measured bounds: Hook 2.5–5 seconds, comparison about 2.5 seconds, workflow about 4 seconds, result at least 3 seconds, and final duration 15–20 seconds. See [reference-editing-rhythm.md](reference-editing-rhythm.md) when modifying those bounds.
 

@@ -12,7 +12,7 @@ from PIL import Image
 from makaron_ad_creator.media import compose_comparison
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, plan_for
-from makaron_ad_creator.prompts import final_prompt
+from makaron_ad_creator.prompts import bgm_prompt, final_prompt
 from makaron_ad_creator.schema import DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -66,6 +66,8 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("final-ja", node_ids)
         qc = next(node for node in plan if node["id"] == "qc")
         self.assertEqual(qc["depends_on"], ["final-yue"])
+        final = next(node for node in plan if node["id"] == "final-yue")
+        self.assertIn("bgm", final["depends_on"])
 
     def test_all_ad_locales_have_fixed_ui_mapping(self) -> None:
         self.assertEqual(
@@ -77,6 +79,13 @@ class PipelineTests(unittest.TestCase):
             ],
         )
 
+        path = self.make_campaign()
+        plan = plan_for(validate_config(read_json(path), path))
+        self.assertEqual([node["id"] for node in plan].count("bgm"), 1)
+        for locale in ("en", "ja", "yue"):
+            final = next(node for node in plan if node["id"] == f"final-{locale}")
+            self.assertIn("bgm", final["depends_on"])
+
     def test_campaign_uses_bundled_fixed_logo_cta(self) -> None:
         path = self.make_campaign()
         config = validate_config(read_json(path), path)
@@ -85,6 +94,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["assets"]["logo_cta_excerpt_seconds"], 3.0)
         self.assertEqual(config["assets"]["logo_cta_start_seconds"], 0.0)
         self.assertEqual(config["audio"]["tts_voice"], "natural energetic young-adult female")
+        self.assertEqual(config["audio"]["bgm_volume"], 0.22)
+        self.assertTrue(config["audio"]["mute_source_audio"])
+        self.assertFalse(config["audio"]["cta_source_audio"])
         self.assertEqual(config["output"]["minimum_duration_seconds"], 15.0)
         self.assertEqual(config["output"]["preferred_duration_seconds"], 18.0)
         self.assertEqual(config["output"]["duration_seconds"], 20.0)
@@ -95,38 +107,74 @@ class PipelineTests(unittest.TestCase):
         scripts = {"en": [f"line {index}" for index in range(5)]}
         prompt = final_prompt(config, "en", scripts)
         self.assertIn("natural energetic young-adult female", prompt)
-        self.assertIn("LOCKED BODY ORDER", prompt)
+        self.assertIn("LOCKED FINAL ORDER", prompt)
         self.assertIn("Hook video", prompt)
         self.assertIn("comparison image", prompt)
         self.assertIn("localized workflow video", prompt)
         self.assertIn("effect/result video", prompt)
-        self.assertIn("appends the fixed 3.0-second Logo CTA locally", prompt)
-        self.assertIn("12.0-17.0 second four-part body", prompt)
-        self.assertIn("aiming for 15.0 seconds", prompt)
+        self.assertIn("Logo CTA exactly 3.0s", prompt)
+        self.assertIn("15.0-20.0 second five-part final video", prompt)
+        self.assertIn("aiming for 18.0 seconds", prompt)
         self.assertIn("Hook 2.5-5.0s", prompt)
-        self.assertIn("Do not generate a Logo CTA", prompt)
+        self.assertIn("internal Remotion workflow", prompt)
+        self.assertIn("Seed Audio voiceover", prompt)
+        self.assertIn("Loop audio 1 as the same continuous BGM", prompt)
+        self.assertIn("including the effect video, workflow video, and Logo CTA", prompt)
+        self.assertIn("top-aligned 140px", prompt)
+        self.assertIn("do not ask the CLI to perform local FFmpeg", prompt)
+        music = bgm_prompt(config)
+        self.assertIn("instrumental only", music)
+        self.assertIn("no vocals", music)
 
-    def test_completed_agent_body_gets_fixed_cta_postprocess(self) -> None:
+    def test_completed_agent_final_is_preserved_without_local_postprocess(self) -> None:
         path = self.make_campaign()
         pipeline = Pipeline(path, executor="agent")
         pipeline.state["nodes"]["final-en"]["status"] = "WAITING_FOR_AGENT"
         pipeline.save()
-        body = self.root / "agent-body.mp4"
-        body.write_bytes(b"agent body")
-
-        def fake_append(source: Path, cta: Path, destination: Path, **_: object) -> Path:
-            self.assertEqual(source.name, "final-body-en.mp4")
-            self.assertEqual(cta, DEFAULT_LOGO_CTA)
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(b"body plus fixed cta")
-            return destination
-
-        with patch("makaron_ad_creator.pipeline.append_logo_cta", side_effect=fake_append) as mocked_append:
-            pipeline.complete_agent_node("final-en", body, "response-final")
-        self.assertEqual(mocked_append.call_count, 1)
+        rendered = self.root / "remotion-final.mp4"
+        rendered.write_bytes(b"remotion final with seed audio subtitles bgm and cta")
+        pipeline.complete_agent_node("final-en", rendered, "response-final")
         final = pipeline.artifact("final-en", ".mp4")
         self.assertEqual(final.name, "final-artifact-en.mp4")
-        self.assertEqual(final.read_bytes(), b"body plus fixed cta")
+        self.assertEqual(final.read_bytes(), b"remotion final with seed audio subtitles bgm and cta")
+
+    def test_final_agent_request_drives_remotion_with_cta_and_bgm_url(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["locales"] = locale_config(["en"])
+        write_json(path, config)
+        pipeline = Pipeline(path, executor="agent")
+
+        scripts = self.root / "scripts.json"
+        write_json(scripts, {"en": [f"line {index}" for index in range(5)]})
+        comparison = self.root / "comparison.png"
+        effect = self.root / "effect.mp4"
+        bgm = self.root / "bgm.mp3"
+        workflow = self.root / "workflow.json"
+        workflow_en = self.root / "workflow-en.mp4"
+        comparison.write_bytes(b"comparison")
+        effect.write_bytes(b"effect")
+        bgm.write_bytes(b"bgm")
+        write_json(workflow, {"ok": True})
+        workflow_en.write_bytes(b"workflow")
+
+        pipeline.add_artifact("scripts", scripts)
+        pipeline.add_artifact("comparison", comparison)
+        pipeline.add_artifact("effect", effect)
+        pipeline.add_artifact("bgm", bgm, source_url="https://cdn.example.com/bgm.mp3")
+        workflow_item = pipeline.add_artifact("workflow", workflow)
+        workflow_item["locale_outputs"] = {"en": str(workflow_en)}
+        node = next(item for item in pipeline.plan if item["id"] == "final-en")
+        pipeline._write_agent_request(node)
+
+        request = read_json(path.parent / "run" / "requests" / "final-en.json")
+        self.assertEqual(request["operation"], "assemble_localized_ad")
+        self.assertEqual(request["audios"], ["https://cdn.example.com/bgm.mp3"])
+        self.assertEqual(request["input_roles"]["videos"][-1], "fixed_logo_cta")
+        self.assertEqual(request["composition"]["engine"], "makaron-agent-remotion")
+        self.assertEqual(request["composition"]["tts_engine"], "seed-audio")
+        self.assertFalse(request["composition"]["local_ffmpeg_audio_or_subtitle_postprocess"])
+        self.assertTrue(request["composition"]["same_bgm_looped_across_full_video"])
 
     def test_schema_rejects_wrong_ui_mapping_for_selected_locale(self) -> None:
         path = self.make_campaign()

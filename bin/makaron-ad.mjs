@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const VERSION = '0.4.0';
+const VERSION = '0.5.0';
 const PACKAGE = 'makaron-ad-creator-cli';
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MAIN_SKILL = path.join(PACKAGE_ROOT, 'skills', 'makaron-ad-creator');

@@ -4,6 +4,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from makaron_ad_creator.adapter import MakaronAdapter, extract_json_object
 
@@ -34,6 +36,38 @@ class AdapterTests(unittest.TestCase):
             scripts = extract_json_object(result["response"])
             self.assertEqual(scripts["en"][0], "e1")
             self.assertEqual(result["response_id"], "run-1")
+
+    def test_music_create_polls_and_downloads_instrumental(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            destination = root / "run" / "assets" / "bgm.mp3"
+            responses = [
+                SimpleNamespace(stdout='{"taskId":"music-1","status":"queued"}', stderr="", returncode=0),
+                SimpleNamespace(stdout='{"taskId":"music-1","status":"completed","audioUrl":"https://example.com/bgm.mp3"}', stderr="", returncode=0),
+            ]
+
+            def fake_download(_: str, output: Path) -> Path:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(b"music")
+                return output
+
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            with patch("makaron_ad_creator.adapter.run", side_effect=responses) as mocked_run, \
+                 patch("makaron_ad_creator.adapter.download", side_effect=fake_download), \
+                 patch("makaron_ad_creator.adapter.time.sleep"):
+                result = adapter.create_music(
+                    node_id="bgm",
+                    prompt="instrumental only",
+                    style="cinematic electronic",
+                    destination=destination,
+                )
+            self.assertEqual(result["response_id"], "music-1")
+            self.assertEqual(destination.read_bytes(), b"music")
+            self.assertEqual(mocked_run.call_args_list[0].args[0][1:3], ["music", "create"])
+            self.assertEqual(mocked_run.call_args_list[1].args[0][1:3], ["music", "status"])
 
 
 if __name__ == "__main__":

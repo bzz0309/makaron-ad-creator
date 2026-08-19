@@ -124,6 +124,11 @@ def extract_response_id(value: Any) -> str | None:
     for key, child in walk(value):
         if key and key.lower() in preferred and isinstance(child, str) and child:
             return child
+        if isinstance(child, str):
+            for nested in json_candidates(child):
+                nested_id = extract_response_id(nested)
+                if nested_id:
+                    return nested_id
     return None
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -53,7 +54,7 @@ class MakaronAdapter:
         skill_id: str | None = None,
         images: list[Path] | None = None,
         videos: list[Path] | None = None,
-        audios: list[Path] | None = None,
+        audios: list[Path | str] | None = None,
     ) -> dict[str, Any]:
         prompt_path = self.run_dir / "prompts" / f"{node_id}.txt"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,6 +91,69 @@ class MakaronAdapter:
         response_path = self.run_dir / "responses" / f"{node_id}.json"
         write_json(response_path, {"response_id": response_id, "media_urls": urls, "response": raw})
         return {"response_id": response_id, "media_urls": urls, "response": raw, "response_path": str(response_path)}
+
+    def create_music(
+        self,
+        *,
+        node_id: str,
+        prompt: str,
+        style: str,
+        destination: Path,
+        timeout_seconds: int = 600,
+    ) -> dict[str, Any]:
+        """Generate one standalone instrumental track with `makaron music create` and poll it."""
+        prompt_path = self.run_dir / "prompts" / f"{node_id}.txt"
+        prompt_path.parent.mkdir(parents=True, exist_ok=True)
+        prompt_path.write_text(prompt.rstrip() + "\n", encoding="utf-8")
+        command = [self.binary, "music", "create"]
+        if style:
+            command += ["--style", style]
+        command.append(prompt)
+        self._log(node_id, [self.binary, "music", "create", "--style", style, "--prompt", prompt])
+        submitted = run(command, timeout=180)
+        values = list(json_candidates(submitted.stdout))
+        raw: Any = values[-1] if values else {"text": submitted.stdout}
+        task_id = extract_response_id(raw)
+        urls = extract_media_urls(raw)
+        status_raw: Any = raw
+        deadline = time.monotonic() + timeout_seconds
+        while not urls and task_id and time.monotonic() < deadline:
+            time.sleep(5)
+            status_command = [self.binary, "music", "status", task_id]
+            self._log(node_id + "-poll", status_command)
+            status_result = run(status_command, timeout=90)
+            candidates = list(json_candidates(status_result.stdout))
+            status_raw = candidates[-1] if candidates else {"text": status_result.stdout}
+            urls = extract_media_urls(status_raw)
+            lowered = json.dumps(status_raw, ensure_ascii=False).lower()
+            if not urls and any(token in lowered for token in ('"status":"failed"', '"status": "failed"', "music failed")):
+                raise AdCreatorError(f"Makaron music generation failed: task_id={task_id}")
+        if not urls:
+            raise AdCreatorError(
+                "Makaron music generation returned no downloadable audio "
+                f"before timeout; task_id={task_id or 'unknown'}"
+            )
+        audio_urls = []
+        for url in urls:
+            suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
+            if suffix in {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg"} or "audio" in url.lower() or "music" in url.lower():
+                audio_urls.append(url)
+        source_url = (audio_urls or urls)[0]
+        download(source_url, destination)
+        response_path = self.run_dir / "responses" / f"{node_id}.json"
+        write_json(response_path, {
+            "task_id": task_id,
+            "media_urls": urls,
+            "submitted": raw,
+            "completed": status_raw,
+        })
+        return {
+            "response_id": task_id,
+            "media_urls": urls,
+            "source_url": source_url,
+            "response": status_raw,
+            "response_path": str(response_path),
+        }
 
     def _materialize(self, node_id: str, response_id: str, fallback: Any) -> tuple[Any, list[str]]:
         attempts = [

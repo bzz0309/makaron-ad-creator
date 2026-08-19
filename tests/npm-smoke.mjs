@@ -18,13 +18,13 @@ function invoke(args) {
 }
 
 assert.match(invoke(['help']), /makaron-ad create/);
-assert.equal(invoke(['version']).trim(), '0.4.0');
+assert.equal(invoke(['version']).trim(), '0.5.0');
 assert.equal(fs.existsSync(fixedLogoCta), true);
 assert.ok(fs.statSync(fixedLogoCta).size > 1_000_000);
 
 const drySetup = JSON.parse(invoke(['setup', '--dry-run']));
 assert.equal(drySetup.ok, true);
-assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.4.0');
+assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.5.0');
 assert.equal(drySetup.skill_install.command.includes('makaron-ad-creator'), true);
 
 const dryCreate = JSON.parse(invoke(['create', '--image', '/tmp/input.jpg', '--skill', 'Rainy Kiss', '--dry-run']));

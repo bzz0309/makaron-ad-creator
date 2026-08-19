@@ -59,25 +59,36 @@ Preserve identity, age, skin tone, facial structure, body proportions, product g
 Return one MP4 only."""
 
 
+def bgm_prompt(config: dict[str, Any]) -> str:
+    audio = config["audio"]
+    return f"""Create one original instrumental background-music track for this vertical social ad.
+TARGET SKILL NAME: {config['target_skill']['name']}
+TARGET SKILL CORE: {config['target_skill']['core']}
+MUSIC DIRECTION: {audio['bgm_prompt']}
+The track must be at least 20 seconds and instrumental only: no vocals, speech, chants, recognizable copyrighted melody, or abrupt ending. Start with an immediate hook, maintain useful edit rhythm, stay at full musical energy through the required duration with no early fade-out, and remain loop-friendly for a 15-20 second ad. Return one audio track only."""
+
+
 def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[str]], model_preference: str = "seedance-fast") -> str:
     output = config["output"]
     offer = config["offer"]
     lines = scripts[locale]
     tts_voice = config["audio"]["tts_voice"]
     cta_seconds = float(config["assets"]["logo_cta_excerpt_seconds"])
-    body_min = float(output["minimum_duration_seconds"]) - cta_seconds
-    body_preferred = float(output["preferred_duration_seconds"]) - cta_seconds
-    body_max = float(output["duration_seconds"]) - cta_seconds
-    return f"""Create one finished vertical social ad from the attached owned/licensed assets.
+    final_min = float(output["minimum_duration_seconds"])
+    final_preferred = float(output["preferred_duration_seconds"])
+    final_max = float(output["duration_seconds"])
+    bgm_volume = float(config["audio"]["bgm_volume"])
+    return f"""Use the Makaron Agent's internal Remotion workflow to create and export one finished vertical social ad from the attached owned/licensed assets in this single project-bound chat run.
 TARGET LOCALE: {locale}
 MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}
 LOCALIZATION RULE: {LOCALE_RULES[locale]}
 VOICEOVER SCRIPT: {json.dumps(lines, ensure_ascii=False)}
-Read exactly those five lines, once, in order, using this target-locale TTS voice profile: {tts_voice}. Do not read UI text or production instructions. Finish voiceover and subtitles by the end of this body video.
-ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the target-Skill effect/result; video 2 is the locale-correct Makaron workflow.
-LOCKED BODY ORDER: Hook video; comparison image; localized workflow video; effect/result video. Use adaptive timing within these bounds: Hook 2.5-5.0s; comparison exactly 2.5s; workflow 3.5-4.5s; effect/result at least 3.0s. Use the 5-second Hook only when the Skill's physical action or transformation mechanism would be unclear in 2.5 seconds; otherwise keep the Hook at 2.5 seconds. Extend the result segment only long enough to show one complete payoff without repetition.
-Return a {body_min:.1f}-{body_max:.1f} second four-part body, aiming for {body_preferred:.1f} seconds but choosing the shortest duration that keeps the mechanism and spoken lines clear. Do not generate a Logo CTA, end card, extra title card, or black tail; the CLI appends the fixed {cta_seconds:.1f}-second Logo CTA locally as the fifth part.
-Mute source audio from videos 1 and 2. Add licensed or newly generated light upbeat instrumental BGM at least 8dB below voiceover, with a clean ending at the body endpoint. Burn one subtitle set timed to every spoken line: white text, black outline, no background bar, upper safe area, maximum two lines. English subtitles are uppercase; Japanese and Cantonese retain natural case. The final spoken word must not be truncated.
+Generate one continuous Seed Audio voiceover and read exactly those five lines, once, in order, using this target-locale voice profile: {tts_voice}. Do not read Skill descriptions, UI text, filenames, or production instructions. Complete every line before the Logo CTA begins; the CTA has no voiceover. The final spoken word must not be truncated.
+ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the target-Skill effect/result; video 2 is the locale-correct Makaron workflow; video 3 is the fixed Makaron Logo CTA source; audio 1 is the separately generated instrumental BGM.
+LOCKED FINAL ORDER: Hook video; comparison image; localized workflow video; effect/result video; fixed Logo CTA video. Use adaptive timing within these bounds: Hook 2.5-5.0s; comparison exactly 2.5s; workflow 3.5-4.5s; effect/result at least 3.0s; Logo CTA exactly {cta_seconds:.1f}s using the source from {float(config['assets']['logo_cta_start_seconds']):.1f}s. Use the 5-second Hook only when the Skill's physical action or transformation mechanism would be unclear in 2.5 seconds; otherwise keep the Hook at 2.5 seconds. Extend the result segment only long enough to show one complete payoff without repetition.
+Mute the original audio from every attached video, including the effect video, workflow video, and Logo CTA. Loop audio 1 as the same continuous BGM from 0.0 seconds through the final frame, including throughout the Logo CTA, at relative mix volume {bgm_volume:.2f} under the voiceover. Do not switch tracks, restart with different music, use CTA source audio, add sound effects, or allow a silent tail. Apply a gentle music fade only at the very end of the complete ad.
+Burn exactly one synchronized subtitle set for every spoken line: top-aligned 140px from the top, white text with black stroke/outline, no background bar, maximum two lines. English subtitles are uppercase; Japanese and Cantonese retain natural case. Do not add duplicate title-card subtitles.
+Return a {final_min:.1f}-{final_max:.1f} second five-part final video, aiming for {final_preferred:.1f} seconds but choosing the shortest duration that keeps the mechanism and spoken lines clear. Build, time-align, subtitle, mix, and export the complete video through Remotion inside this one chat run; do not ask the CLI to perform local FFmpeg concat, amix, ASS subtitle rendering, edge-tts, or PIL final composition.
 SUPPORTED OFFER: {offer['value_proposition']}
-Do not invent prices, ratings, endorsements, urgency, or capabilities. No black frames. Exact {output['width']}x{output['height']}, 30fps, H.264/AAC, within {body_min:.1f}-{body_max:.1f} seconds.
-Return the body MP4 and a concise QC summary."""
+Do not invent prices, ratings, endorsements, urgency, or capabilities. No black frames. Exact {output['width']}x{output['height']}, 30fps, H.264/AAC, within {final_min:.1f}-{final_max:.1f} seconds.
+Return the final MP4 and a concise QC summary."""

@@ -130,6 +130,24 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
     audio = config.setdefault("audio", {})
     if not str(audio.get("tts_voice", "")).strip():
         audio["tts_voice"] = "natural energetic young-adult female"
+    if not str(audio.get("bgm_prompt", "")).strip():
+        audio["bgm_prompt"] = (
+            "at least 20 seconds of polished vertical social-ad background music matching the target Skill: "
+            "immediate hook, clear rhythmic edit points, energetic but refined, instrumental only, "
+            "no vocals, no spoken words, no copyrighted melody, full volume through the end, "
+            "no early fade-out, loop-friendly ending"
+        )
+    if not str(audio.get("bgm_style", "")).strip():
+        audio["bgm_style"] = "cinematic electronic social ad"
+    try:
+        bgm_volume = float(audio.get("bgm_volume", 0.22))
+    except (TypeError, ValueError):
+        bgm_volume = -1
+    if not 0 < bgm_volume <= 0.5:
+        errors.append("audio.bgm_volume must be greater than 0 and at most 0.5")
+    audio["bgm_volume"] = bgm_volume
+    audio["mute_source_audio"] = True
+    audio["cta_source_audio"] = False
     if errors:
         raise AdCreatorError("Invalid campaign config:\n- " + "\n- ".join(errors))
     return config
@@ -175,7 +193,19 @@ def campaign_template(
         },
         "locales": locale_config(locales),
         "style_constraints": ["brand-safe", "identity-stable", "no unsupported claims"],
-        "audio": {"tts_voice": "natural energetic young-adult female"},
+        "audio": {
+            "tts_voice": "natural energetic young-adult female",
+            "bgm_prompt": (
+                "at least 20 seconds of polished vertical social-ad background music matching the target Skill: "
+                "immediate hook, clear rhythmic edit points, energetic but refined, instrumental only, "
+                "no vocals, no spoken words, no copyrighted melody, full volume through the end, "
+                "no early fade-out, loop-friendly ending"
+            ),
+            "bgm_style": "cinematic electronic social ad",
+            "bgm_volume": 0.22,
+            "mute_source_audio": True,
+            "cta_source_audio": False,
+        },
         "automation": {
             "executor": "agent",
             "makaron_binary": "makaron",

@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import MakaronAdapter, extract_json_object
-from .media import append_logo_cta, compose_comparison, extract_after_frame, probe_video
-from .prompts import before_prompt, effect_prompt, final_prompt, script_prompt
+from .media import bgm_similarity_in_cta, compose_comparison, extract_after_frame, probe_audio, probe_video
+from .prompts import before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import LOCALE_TO_UI, ad_locales, ui_locales, validate_config
 from .util import AdCreatorError, json_candidates, read_json, run, sha256, write_json
 
@@ -26,6 +26,7 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "scripts", "kind": "generate_json", "depends_on": ["validate"]},
         {"id": "before", "kind": "generate_image", "depends_on": ["validate"]},
         {"id": "effect", "kind": "generate_video", "depends_on": ["validate"]},
+        {"id": "bgm", "kind": "generate_audio", "depends_on": ["validate"]},
         {"id": "after", "kind": "local", "depends_on": ["effect"]},
         {"id": "comparison", "kind": "local", "depends_on": ["before", "after"]},
         {"id": "workflow", "kind": "local", "depends_on": ["validate"]},
@@ -35,7 +36,7 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         nodes.append({
             "id": f"final-{locale}",
             "kind": "generate_video",
-            "depends_on": ["scripts", "comparison", "effect", "workflow"],
+            "depends_on": ["scripts", "comparison", "effect", "workflow", "bgm"],
         })
     nodes += [
         {"id": "qc", "kind": "local", "depends_on": [f"final-{locale}" for locale in selected_locales]},
@@ -165,6 +166,8 @@ class Pipeline:
             self._generate_before()
         elif node_id == "effect":
             self._generate_effect(attempt)
+        elif node_id == "bgm":
+            self._generate_bgm()
         elif node_id == "after":
             output = self.run_dir / "assets" / "after.png"
             extract_after_frame(self.artifact("effect", ".mp4"), output)
@@ -242,6 +245,24 @@ class Pipeline:
         )
         self.add_artifact("effect", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)])
 
+    def _generate_bgm(self) -> None:
+        output = self.run_dir / "assets" / "bgm.mp3"
+        result = self._adapter().create_music(
+            node_id="bgm",
+            prompt=bgm_prompt(self.config),
+            style=str(self.config["audio"]["bgm_style"]),
+            destination=output,
+        )
+        info = probe_audio(output)
+        self.add_artifact(
+            "bgm",
+            output,
+            response_id=result.get("response_id"),
+            source_url=result.get("source_url"),
+            audio_policy="instrumental-only; loop across full final ad",
+            duration=info["duration"],
+        )
+
     def _generate_workflow(self) -> None:
         main_skill_dir = Path(__file__).resolve().parents[2]
         script = main_skill_dir.parent / "edit-makaron-app-workflow-recording" / "scripts" / "workflow_recording.py"
@@ -277,35 +298,65 @@ class Pipeline:
             raise AdCreatorError(f"Missing workflow video for {ui_locale}")
         return path
 
+    def _bgm_input(self) -> str:
+        item = self.state["nodes"]["bgm"]["artifacts"][0]
+        source_url = str(item.get("source_url") or "")
+        if source_url.startswith(("https://", "http://")):
+            return source_url
+        return str(self.artifact("bgm"))
+
     def _generate_final(self, locale: str, attempt: int) -> None:
         scripts = read_json(self.artifact("scripts"))
-        body = self.run_dir / "final" / f"final-body-{locale}.mp4"
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
-        videos = [self.artifact("effect", ".mp4"), self._workflow_for(locale)]
+        videos = [
+            self.artifact("effect", ".mp4"),
+            self._workflow_for(locale),
+            Path(self.config["assets"]["logo_cta"]),
+        ]
         result = self._adapter().chat(
             node_id=f"final-{locale}",
             prompt=final_prompt(self.config, locale, scripts, MODELS[min(attempt - 1, len(MODELS) - 1)]),
             skill_id=self.config.get("automation", {}).get("builder_skill_id") or None,
             images=[self.artifact("comparison")],
             videos=videos,
-            destination=body,
+            audios=[self._bgm_input()],
+            destination=output,
         )
-        append_logo_cta(
-            body,
-            Path(self.config["assets"]["logo_cta"]),
+        self.add_artifact(
+            f"final-{locale}",
             output,
-            start_seconds=float(self.config["assets"]["logo_cta_start_seconds"]),
-            excerpt_seconds=float(self.config["assets"]["logo_cta_excerpt_seconds"]),
-            width=int(self.config["output"]["width"]),
-            height=int(self.config["output"]["height"]),
+            response_id=result.get("response_id"),
+            model=MODELS[min(attempt - 1, 2)],
+            source_audio_muted=True,
+            cta_source_audio_muted=True,
+            continuous_bgm_sha256=sha256(self.artifact("bgm")),
+            composition_engine="makaron-agent-remotion",
+            tts_engine="seed-audio",
         )
-        self.add_artifact(f"final-{locale}", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)])
 
     def _qc(self) -> None:
         expected = self.config["output"]
-        report: dict[str, Any] = {"status": "PASS", "locales": {}}
+        bgm_info = probe_audio(self.artifact("bgm"))
+        report: dict[str, Any] = {
+            "status": "PASS",
+            "audio_mix": {
+                "bgm": bgm_info,
+                "same_bgm_for_all_locales": True,
+                "looped_from_start_through_cta": True,
+                "source_audio_muted": True,
+                "cta_source_audio_muted": True,
+                "bgm_volume": float(self.config["audio"]["bgm_volume"]),
+            },
+            "locales": {},
+        }
         for locale in ad_locales(self.config):
-            info = probe_video(self.artifact(f"final-{locale}", ".mp4"))
+            final_path = self.artifact(f"final-{locale}", ".mp4")
+            info = probe_video(final_path)
+            bgm_similarity = bgm_similarity_in_cta(
+                final_path,
+                self.artifact("bgm"),
+                float(self.config["assets"]["logo_cta_excerpt_seconds"]),
+            )
             checks = {
                 "dimensions": info["width"] == expected["width"] and info["height"] == expected["height"],
                 "codec": info["codec"] == "h264",
@@ -315,8 +366,10 @@ class Pipeline:
                     <= float(expected["duration_seconds"]) + 0.1
                 ),
                 "audio": info["has_audio"],
+                "continuous_bgm_through_cta": bgm_similarity >= 0.55,
                 "size": info["bytes"] <= 50 * 1024 * 1024,
             }
+            info["bgm_cta_similarity"] = bgm_similarity
             info["checks"] = checks
             info["pass"] = all(checks.values())
             report["locales"][locale] = info
@@ -337,6 +390,9 @@ class Pipeline:
             target = delivery / source.name
             shutil.copy2(source, target)
             delivered.append({"locale": locale, "path": str(target.resolve()), "sha256": sha256(target)})
+        bgm_source = self.artifact("bgm")
+        bgm_target = delivery / ("bgm-source" + bgm_source.suffix.lower())
+        shutil.copy2(bgm_source, bgm_target)
         provenance = {
             "campaign_id": self.config["campaign_id"],
             "skill_id": self.config["target_skill"]["id"],
@@ -347,6 +403,16 @@ class Pipeline:
                 "sha256": sha256(Path(self.config["assets"]["logo_cta"])),
                 "start_seconds": self.config["assets"]["logo_cta_start_seconds"],
                 "excerpt_seconds": self.config["assets"]["logo_cta_excerpt_seconds"],
+                "source_audio_used": False,
+            },
+            "audio_mix": {
+                "bgm_path": str(bgm_target.resolve()),
+                "bgm_sha256": sha256(bgm_target),
+                "bgm_volume": self.config["audio"]["bgm_volume"],
+                "same_bgm_looped_across_full_video": True,
+                "source_video_audio_muted": True,
+                "cta_source_audio_muted": True,
+                "tts_source": "seed-audio inside project-bound Remotion final generation",
             },
             "deliverables": delivered,
             "node_lineage": self.state["nodes"],
@@ -363,7 +429,7 @@ class Pipeline:
         qc = read_json(self.artifact("qc"))
         qc_lines = ["# QC report", "", f"Overall: **{qc['status']}**", ""]
         for locale, info in qc["locales"].items():
-            qc_lines += [f"## {locale}", "", f"- Technical pass: {info['pass']}", f"- Size: {info['width']}×{info['height']}", f"- Duration: {info['duration']:.3f}s", f"- Audio: {info['has_audio']}", ""]
+            qc_lines += [f"## {locale}", "", f"- Technical pass: {info['pass']}", f"- Size: {info['width']}×{info['height']}", f"- Duration: {info['duration']:.3f}s", f"- Audio: {info['has_audio']}", f"- Same BGM through CTA: {info['checks']['continuous_bgm_through_cta']} (similarity {info['bgm_cta_similarity']:.3f})", ""]
         (delivery / "qc_report.md").write_text("\n".join(qc_lines), encoding="utf-8")
         shutil.copy2(self.campaign_dir / "plan.json", delivery / "plan.json")
         shutil.copy2(self.campaign_dir / "project-binding.json", delivery / "project-binding.json")
@@ -399,7 +465,7 @@ class Pipeline:
             "node_id": node_id,
             "project_id": self.config["project_binding"]["project_id"],
             "skill_id": self.config["target_skill"]["id"],
-            "must_use_bound_project": True,
+            "must_use_bound_project": node_id != "bgm",
             "attempt": state["attempts"],
             "model_preference": model_preference,
             "forbidden": ["--project auto", "standalone makaron edit", "standalone makaron video create"],
@@ -410,6 +476,16 @@ class Pipeline:
             request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [self.config["input_image"]], "expected": "before.png"})
         elif node_id == "effect":
             request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4"})
+        elif node_id == "bgm":
+            request.update({
+                "operation": "generate_instrumental_bgm",
+                "prompt": bgm_prompt(self.config),
+                "style": self.config["audio"]["bgm_style"],
+                "command_contract": "makaron music create --style <style> <prompt>",
+                "instrumental_only": True,
+                "shared_across_selected_locales": True,
+                "expected": "bgm.mp3",
+            })
         elif node_id.startswith("final-"):
             locale = node_id.split("-", 1)[1]
             scripts = read_json(self.artifact("scripts"))
@@ -419,19 +495,25 @@ class Pipeline:
                 "locale": locale,
                 "prompt": final_prompt(self.config, locale, scripts, model_preference),
                 "images": [str(self.artifact("comparison"))],
-                "videos": videos,
+                "videos": videos + [str(Path(self.config["assets"]["logo_cta"]))],
+                "audios": [self._bgm_input()],
                 "input_roles": {
                     "images": ["before_after_comparison"],
-                    "videos": ["effect_result", "localized_workflow"],
+                    "videos": ["effect_result", "localized_workflow", "fixed_logo_cta"],
+                    "audios": ["campaign_bgm"],
                 },
-                "postprocess": {
-                    "operation": "append_fixed_logo_cta",
-                    "handled_by_cli": True,
-                    "source": self.config["assets"]["logo_cta"],
-                    "start_seconds": self.config["assets"]["logo_cta_start_seconds"],
-                    "excerpt_seconds": self.config["assets"]["logo_cta_excerpt_seconds"],
+                "composition": {
+                    "engine": "makaron-agent-remotion",
+                    "one_project_bound_chat": True,
+                    "tts_engine": "seed-audio",
+                    "subtitles_burned_in": True,
+                    "all_source_video_audio_muted": True,
+                    "cta_source_audio_muted": True,
+                    "bgm_volume": self.config["audio"]["bgm_volume"],
+                    "same_bgm_looped_across_full_video": True,
+                    "local_ffmpeg_audio_or_subtitle_postprocess": False,
                 },
-                "expected": f"final-body-{locale}.mp4",
+                "expected": f"final-artifact-{locale}.mp4",
             })
         else:
             raise AdCreatorError(f"Agent request is not supported for {node_id}")
@@ -443,7 +525,13 @@ class Pipeline:
         state["status"] = "WAITING_FOR_AGENT"
         state["request"] = str(path)
 
-    def complete_agent_node(self, node_id: str, artifact: Path, response_id: str | None = None) -> None:
+    def complete_agent_node(
+        self,
+        node_id: str,
+        artifact: Path,
+        response_id: str | None = None,
+        source_url: str | None = None,
+    ) -> None:
         if node_id not in self.state["nodes"]:
             raise AdCreatorError(f"Unknown node: {node_id}")
         state = self.state["nodes"][node_id]
@@ -458,6 +546,10 @@ class Pipeline:
         elif node_id == "effect" or node_id.startswith("final-"):
             if artifact.suffix.lower() != ".mp4":
                 raise AdCreatorError(f"{node_id} requires an MP4 artifact")
+        elif node_id == "bgm":
+            if artifact.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac"}:
+                raise AdCreatorError("bgm requires an MP3/WAV/M4A/AAC artifact")
+            probe_audio(artifact)
         elif node_id == "before" and artifact.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
             raise AdCreatorError("before requires an image artifact")
         if node_id == "scripts":
@@ -466,28 +558,22 @@ class Pipeline:
             destination = self.run_dir / "assets" / ("before" + artifact.suffix.lower())
         elif node_id == "effect":
             destination = self.run_dir / "assets" / "effect.mp4"
+        elif node_id == "bgm":
+            destination = self.run_dir / "assets" / ("bgm" + artifact.suffix.lower())
         elif node_id.startswith("final-"):
             locale = node_id.split("-", 1)[1]
-            body = self.run_dir / "final" / f"final-body-{locale}.mp4"
-            body.parent.mkdir(parents=True, exist_ok=True)
-            if artifact != body.resolve():
-                shutil.copy2(artifact, body)
             destination = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
-            append_logo_cta(
-                body,
-                Path(self.config["assets"]["logo_cta"]),
-                destination,
-                start_seconds=float(self.config["assets"]["logo_cta_start_seconds"]),
-                excerpt_seconds=float(self.config["assets"]["logo_cta_excerpt_seconds"]),
-                width=int(self.config["output"]["width"]),
-                height=int(self.config["output"]["height"]),
-            )
         else:
             raise AdCreatorError(f"Unsupported completed Agent node: {node_id}")
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if not node_id.startswith("final-") and artifact != destination.resolve():
+        if artifact != destination.resolve():
             shutil.copy2(artifact, destination)
-        self.add_artifact(node_id, destination, response_id=response_id)
+        metadata: dict[str, Any] = {"response_id": response_id}
+        if node_id == "bgm" and source_url:
+            if not source_url.startswith(("https://", "http://")):
+                raise AdCreatorError("bgm source_url must use HTTP or HTTPS")
+            metadata["source_url"] = source_url
+        self.add_artifact(node_id, destination, **metadata)
         state["status"] = "PASS"
         state["completed_at"] = now()
         self.state["status"] = "RUNNING"

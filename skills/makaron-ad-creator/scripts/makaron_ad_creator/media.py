@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
+import subprocess
+from array import array
 from pathlib import Path
 from typing import Any
 
@@ -64,47 +67,82 @@ def compose_comparison(before: Path, after: Path, output: Path, width: int = 108
     return output
 
 
-def append_logo_cta(
-    body: Path,
-    logo_cta: Path,
-    output: Path,
-    *,
-    start_seconds: float,
-    excerpt_seconds: float,
-    width: int = 1080,
-    height: int = 1920,
-) -> Path:
-    """Append an unchanged-in-content excerpt of the fixed CTA using local FFmpeg."""
-    body_info = probe_video(body)
-    cta_info = probe_video(logo_cta)
-    if not body_info["has_audio"]:
-        raise AdCreatorError("Generated ad body has no audio; cannot append fixed Logo CTA")
-    if not cta_info["has_audio"]:
-        raise AdCreatorError("Fixed Logo CTA has no audio")
-    if start_seconds < 0 or excerpt_seconds <= 0 or start_seconds + excerpt_seconds > cta_info["duration"] + 0.05:
-        raise AdCreatorError("Fixed Logo CTA excerpt falls outside the source video")
+def probe_audio(path: Path) -> dict[str, Any]:
+    ffprobe = require_binary("ffprobe")
+    result = run([
+        ffprobe, "-v", "error", "-show_streams", "-show_format", "-of", "json", str(path)
+    ])
+    metadata = json.loads(result.stdout)
+    audio = next((item for item in metadata.get("streams", []) if item.get("codec_type") == "audio"), None)
+    if not audio:
+        raise AdCreatorError(f"No audio stream in {path}")
+    return {
+        "path": str(path),
+        "sha256": sha256(path),
+        "bytes": path.stat().st_size,
+        "codec": audio.get("codec_name"),
+        "sample_rate": int(audio.get("sample_rate", 0) or 0),
+        "channels": int(audio.get("channels", 0) or 0),
+        "duration": float(metadata.get("format", {}).get("duration", 0)),
+        "has_audio": True,
+    }
+
+
+def _pcm_segment(path: Path, start_seconds: float, duration_seconds: float, *, loop: bool = False) -> array:
     ffmpeg = require_binary("ffmpeg")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    filter_graph = (
-        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[bodyv];"
-        "[0:a]aresample=48000,asetpts=PTS-STARTPTS[bodya];"
-        f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
-        f"crop={width}:{height},fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[ctav];"
-        "[1:a]aresample=48000,asetpts=PTS-STARTPTS[ctaa];"
-        "[bodyv][bodya][ctav][ctaa]concat=n=2:v=1:a=1[outv][outa]"
-    )
-    run([
-        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-        "-i", str(body),
-        "-ss", f"{start_seconds:.3f}", "-t", f"{excerpt_seconds:.3f}", "-i", str(logo_cta),
-        "-filter_complex", filter_graph,
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-        str(output),
-    ], timeout=600)
-    return output
+    command = [ffmpeg, "-hide_banner", "-loglevel", "error"]
+    if loop:
+        command += ["-stream_loop", "-1"]
+    command += [
+        "-ss", f"{max(0.0, start_seconds):.3f}",
+        "-t", f"{duration_seconds:.3f}",
+        "-i", str(path),
+        "-vn", "-ac", "1", "-ar", "8000", "-f", "s16le", "pipe:1",
+    ]
+    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=120)
+    if result.returncode:
+        message = result.stderr.decode("utf-8", errors="replace").strip()
+        raise AdCreatorError(f"Cannot decode audio segment from {path}: {message[-1000:]}")
+    samples = array("h")
+    samples.frombytes(result.stdout)
+    return samples
+
+
+def bgm_similarity_in_cta(final_video: Path, bgm: Path, cta_seconds: float) -> float:
+    """Compare the CTA audio with the expected timeline position of the campaign BGM."""
+    final_info = probe_video(final_video)
+    bgm_info = probe_audio(bgm)
+    if final_info["duration"] <= cta_seconds or bgm_info["duration"] <= 0:
+        return 0.0
+    segment_duration = min(0.9, max(0.4, cta_seconds - 0.6))
+    final_start = final_info["duration"] - cta_seconds + 0.25
+    bgm_start = final_start % bgm_info["duration"]
+    final_samples = _pcm_segment(final_video, final_start, segment_duration)
+    bgm_samples = _pcm_segment(bgm, bgm_start, segment_duration, loop=True)
+    count = min(len(final_samples), len(bgm_samples))
+    if count < 1600:
+        return 0.0
+    final_values = [float(value) for value in final_samples[:count]]
+    bgm_values = [float(value) for value in bgm_samples[:count]]
+    final_mean = sum(final_values) / count
+    bgm_mean = sum(bgm_values) / count
+    final_values = [value - final_mean for value in final_values]
+    bgm_values = [value - bgm_mean for value in bgm_values]
+    best = 0.0
+    for lag in range(-160, 161, 8):
+        if lag >= 0:
+            left = final_values[lag:]
+            right = bgm_values[:count - lag]
+        else:
+            left = final_values[:count + lag]
+            right = bgm_values[-lag:]
+        dot = sum(a * b for a, b in zip(left, right))
+        left_energy = sum(value * value for value in left)
+        right_energy = sum(value * value for value in right)
+        if left_energy <= 0 or right_energy <= 0:
+            continue
+        best = max(best, abs(dot) / math.sqrt(left_energy * right_energy))
+    return round(best, 4)
 
 
 def probe_video(path: Path) -> dict[str, Any]:
