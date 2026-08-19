@@ -64,6 +64,49 @@ def compose_comparison(before: Path, after: Path, output: Path, width: int = 108
     return output
 
 
+def append_logo_cta(
+    body: Path,
+    logo_cta: Path,
+    output: Path,
+    *,
+    start_seconds: float,
+    excerpt_seconds: float,
+    width: int = 1080,
+    height: int = 1920,
+) -> Path:
+    """Append an unchanged-in-content excerpt of the fixed CTA using local FFmpeg."""
+    body_info = probe_video(body)
+    cta_info = probe_video(logo_cta)
+    if not body_info["has_audio"]:
+        raise AdCreatorError("Generated ad body has no audio; cannot append fixed Logo CTA")
+    if not cta_info["has_audio"]:
+        raise AdCreatorError("Fixed Logo CTA has no audio")
+    if start_seconds < 0 or excerpt_seconds <= 0 or start_seconds + excerpt_seconds > cta_info["duration"] + 0.05:
+        raise AdCreatorError("Fixed Logo CTA excerpt falls outside the source video")
+    ffmpeg = require_binary("ffmpeg")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    filter_graph = (
+        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[bodyv];"
+        "[0:a]aresample=48000,asetpts=PTS-STARTPTS[bodya];"
+        f"[1:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height},fps=30,setsar=1,format=yuv420p,setpts=PTS-STARTPTS[ctav];"
+        "[1:a]aresample=48000,asetpts=PTS-STARTPTS[ctaa];"
+        "[bodyv][bodya][ctav][ctaa]concat=n=2:v=1:a=1[outv][outa]"
+    )
+    run([
+        ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+        "-i", str(body),
+        "-ss", f"{start_seconds:.3f}", "-t", f"{excerpt_seconds:.3f}", "-i", str(logo_cta),
+        "-filter_complex", filter_graph,
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+        str(output),
+    ], timeout=600)
+    return output
+
+
 def probe_video(path: Path) -> dict[str, Any]:
     ffprobe = require_binary("ffprobe")
     result = run([
@@ -84,4 +127,3 @@ def probe_video(path: Path) -> dict[str, Any]:
         "duration": float(metadata.get("format", {}).get("duration", 0)),
         "has_audio": audio is not None,
     }
-

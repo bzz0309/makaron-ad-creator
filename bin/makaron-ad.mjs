@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 const PACKAGE = 'makaron-ad-creator-cli';
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MAIN_SKILL = path.join(PACKAGE_ROOT, 'skills', 'makaron-ad-creator');
@@ -295,7 +295,19 @@ function runMakaron(args) {
 }
 
 function help() {
-  console.log(`${PACKAGE} ${VERSION}\n\nUsage:\n  npx -y ${PACKAGE} setup [--agent codex]\n  makaron-ad login\n  makaron-ad create --image /path/input.jpg --skill "Marketplace Skill Name"\n\nAgent-friendly shorthand:\n  makaron-ad /path/input.jpg "Marketplace Skill Name"\n\nCommands:\n  setup          Install the global CLI, private Python/Pillow runtime, and Agent Skill\n  install-skill  Install only the bundled makaron-ad-creator Skill\n  login          Authenticate the bundled Makaron CLI on this computer\n  credits        Show Makaron credit balance\n  doctor         Check runtime, Makaron, FFmpeg, and Skill availability\n  create         Run the full one-image to EN/JA/YUE ad workflow\n  status         Inspect a resumable campaign\n  run            Resume a campaign\n\nAll workflow command results are JSON. Live create operations use Makaron credits. Supplying an image attests that it is authorized for the requested ad production.`);
+  console.log(`${PACKAGE} ${VERSION}\n\nUsage:\n  npx -y ${PACKAGE} setup [--agent codex]\n  makaron-ad login\n  makaron-ad create --image /path/input.jpg --skill "Marketplace Skill Name" [--locale en|ja|yue|all]\n\nAgent-friendly shorthand:\n  makaron-ad /path/input.jpg "Marketplace Skill Name" [--locale yue]\n\nCommands:\n  setup          Install the global CLI, private Python/Pillow runtime, and Agent Skill\n  install-skill  Install only the bundled makaron-ad-creator Skill\n  login          Authenticate the bundled Makaron CLI on this computer\n  credits        Show Makaron credit balance\n  doctor         Check runtime, Makaron, FFmpeg, and Skill availability\n  create         Generate one or more selected locales (default: EN/JA/YUE)\n  status         Inspect a resumable campaign\n  run            Resume a campaign\n\nLocale mapping is fixed: en→English UI, ja→Japanese UI, yue→Traditional-Chinese UI. All workflow command results are JSON. Live create operations use Makaron credits. Supplying an image attests that it is authorized for the requested ad production.`);
+}
+
+function selectedLocales(options) {
+  const raw = String(options.locale || options.locales || 'all').trim().toLowerCase();
+  if (!raw || raw === 'all') return ['en', 'ja', 'yue'];
+  const values = raw.split(',').map((value) => value.trim()).filter(Boolean);
+  const allowed = new Set(['en', 'ja', 'yue']);
+  if (!values.length || values.some((value) => !allowed.has(value))) {
+    fail('INVALID_LOCALE', '--locale must be en, ja, yue, all, or a comma-separated subset.');
+  }
+  if (new Set(values).size !== values.length) fail('INVALID_LOCALE', '--locale must not contain duplicates.');
+  return values;
 }
 
 function normalizePythonArgs(command, options) {
@@ -303,11 +315,12 @@ function normalizePythonArgs(command, options) {
     const image = options.image || options._[0];
     const skill = options.skill || options['skill-name'] || options._[1];
     if (!image || !skill) fail('INPUT_REQUIRED', 'create requires --image <file> and --skill <Marketplace Skill name>.');
+    const locales = selectedLocales(options);
     if (options['dry-run']) {
-      emit({ok: true, dry_run: true, action: 'create-three-locale-ad', image: path.resolve(image), skill_name: skill, outputs: ['en', 'ja', 'yue']});
+      emit({ok: true, dry_run: true, action: 'create-selected-locale-ad', image: path.resolve(image), skill_name: skill, outputs: locales});
       return null;
     }
-    return ['make', image, skill];
+    return ['make', image, skill, '--locales', locales.join(',')];
   }
   return [command, ...options._];
 }

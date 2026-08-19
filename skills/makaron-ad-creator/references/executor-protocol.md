@@ -21,10 +21,10 @@ Never mark a request complete from prose alone. The artifact must exist and matc
 
 | Operation | Expected result |
 |---|---|
-| `generate_json` | UTF-8 JSON with exactly five strings under each of `en`, `ja`, `yue` |
+| `generate_json` | UTF-8 JSON with exactly five strings under each selected locale key and no unselected locale keys |
 | `generate_image` | One decoded PNG/JPEG/WebP |
 | `invoke_skill_video` | One MP4 created by the exact target Marketplace Skill |
-| `assemble_localized_ad` | One localized 1080×1920 H.264/AAC MP4, ≤18s |
+| `assemble_localized_ad` | One localized four-part 1080×1920 H.264/AAC body; `postprocess` tells the CLI to append the fixed Logo CTA locally as part five |
 
 ## Recovery
 

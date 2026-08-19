@@ -9,6 +9,11 @@ from makaron_ad_creator.adapter import MakaronAdapter, extract_json_object
 
 
 class AdapterTests(unittest.TestCase):
+    def test_extract_json_object_accepts_selected_locale_subset(self) -> None:
+        response = {"result": {"text": '{"yue":["一","二","三","四","五"]}'}}
+        scripts = extract_json_object(response, ("yue",))
+        self.assertEqual(scripts["yue"][0], "一")
+
     def test_background_text_response_is_polled(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
@@ -33,4 +38,3 @@ class AdapterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

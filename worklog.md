@@ -24,4 +24,18 @@
 
 - Run a rights-cleared live campaign against an authorized Makaron project.
 - Confirm live response payload parsing against an authorized generation. The installed CLI rejects explicit model flags, so retry model order is recorded as a routing preference in the locked prompt; response polling uses documented `--wait --materialize --json` with fallbacks.
-- Publish npm package `makaron-ad-creator-cli@0.3.0` after `npm login`; the setup command will then install only the master Skill automatically.
+
+## 2026-08-19
+
+- Added end-to-end locale selection with `--locale en`, `--locale ja`, `--locale yue`, `--locale en,ja`, or the default `all`.
+- Made the DAG, script JSON, synthetic workflow rendering, final generation, QC, review CSV, provenance, and delivery operate only on selected locales.
+- Locked UI mapping as `en→en`, `ja→ja`, and `yue→zh-Hant`; added regression coverage for Cantonese-only generation.
+- Updated the Before prompt from the supplied change list to keep scenes naturally bright and unpolished while preserving source skin tone and avoiding invented severe defects or degrading treatment.
+- Added the supplied fashion direction as an adult-person-only conditional rule so it cannot be applied to minors, age-ambiguous people, products, nonhuman subjects, or unrelated transformations.
+- Bundled the user-supplied 10.10-second Makaron Logo CTA source in the npm-distributed master Skill with an identical SHA-256 copy.
+- Locked every final edit to Hook video → comparison image → locale-correct workflow video → effect/result video → fixed Logo CTA video, with explicit cross-Agent input roles.
+- Changed default target-locale TTS to a natural energetic young-adult female voice, ending before the CTA while preserving the CTA excerpt's original audio.
+- Moved Logo CTA assembly out of the generative node: Makaron/another Agent now returns the four-part body and the CLI appends the fixed CTA locally with FFmpeg, preventing brand drift.
+- Analyzed three supplied finished ads (English Lens Sign, Japanese Street Paparazzi, and Cantonese Photo Peel). Changed the fixed CTA default to the source's observed 0–3 second opening, and replaced the forced 18-second edit with a 15–20 second adaptive envelope: 2.5–5 second Hook, about 2.5 second comparison, about 4 second workflow, and a complete 3–7 second result.
+- Bumped the release candidate to `0.4.0`; passed 16 npm/Python tests, deterministic CTA append integration, package dry-run inspection, and Skill validation.
+- Received explicit approval to push and publish `0.4.0`. Repeated `npm ci`, all 16 tests, package inspection, and an isolated tarball install under a restricted PATH; the installed CLI reported `0.4.0` and `doctor.ok=true` using its bundled Makaron CLI, FFmpeg, FFprobe, v5 workflow Skill, and fixed Logo CTA.

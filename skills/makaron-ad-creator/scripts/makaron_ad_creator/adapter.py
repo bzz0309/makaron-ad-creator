@@ -112,16 +112,16 @@ class MakaronAdapter:
         return last, []
 
 
-def extract_json_object(response: Any) -> dict[str, Any]:
-    if isinstance(response, dict) and all(key in response for key in ("en", "ja", "yue")):
+def extract_json_object(response: Any, required_keys: tuple[str, ...] = ("en", "ja", "yue")) -> dict[str, Any]:
+    if isinstance(response, dict) and all(key in response for key in required_keys):
         return response
     for _, value in walk(response):
-        if isinstance(value, dict) and all(key in value for key in ("en", "ja", "yue")):
+        if isinstance(value, dict) and all(key in value for key in required_keys):
             return value
         if not isinstance(value, str):
             continue
         for candidate in json_candidates(value):
-            if isinstance(candidate, dict) and all(key in candidate for key in ("en", "ja", "yue")):
+            if isinstance(candidate, dict) and all(key in candidate for key in required_keys):
                 return candidate
         match = re.search(r"\{[\s\S]*\}", value)
         if match:
@@ -129,6 +129,7 @@ def extract_json_object(response: Any) -> dict[str, Any]:
                 candidate = json.loads(match.group(0))
             except json.JSONDecodeError:
                 continue
-            if isinstance(candidate, dict) and all(key in candidate for key in ("en", "ja", "yue")):
+            if isinstance(candidate, dict) and all(key in candidate for key in required_keys):
                 return candidate
-    raise AdCreatorError("Text generation did not return the required en/ja/yue JSON object")
+    expected = "/".join(required_keys)
+    raise AdCreatorError(f"Text generation did not return the required {expected} JSON object")
