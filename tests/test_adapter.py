@@ -28,6 +28,50 @@ class AdapterTests(unittest.TestCase):
         }
         self.assertEqual(extract_generated_image_urls(response), [])
 
+    def test_chat_passes_http_media_urls_without_turning_them_into_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            raw = {"text": "ok"}
+            with patch("makaron_ad_creator.adapter.run", return_value=SimpleNamespace(stdout=json.dumps(raw), stderr="", returncode=0)) as mocked_run:
+                adapter.chat(
+                    node_id="url-inputs",
+                    prompt="compose",
+                    images=["https://cdn.example.com/comparison.png"],
+                    videos=["https://cdn.example.com/effect.mp4"],
+                    audios=["https://cdn.example.com/bgm.mp3"],
+                )
+            command = mocked_run.call_args.args[0]
+            self.assertIn("https://cdn.example.com/comparison.png", command)
+            self.assertIn("https://cdn.example.com/effect.mp4", command)
+            self.assertIn("https://cdn.example.com/bgm.mp3", command)
+
+    def test_publish_local_media_uses_backend_upload_and_hash_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            source = root / "workflow.mp4"
+            source.write_bytes(b"video")
+            adapter = MakaronAdapter("project-1", root / "campaign" / "run", str(fake))
+            uploaded = SimpleNamespace(
+                stdout="✅ Uploaded: https://cdn.makaron.app/storage/v1/object/public/ad-creator/workflow.mp4\n",
+                stderr="",
+                returncode=0,
+            )
+            with patch("makaron_ad_creator.adapter.run", return_value=uploaded) as mocked_run:
+                first = adapter.publish_local_media(source, role="workflow-en")
+                second = adapter.publish_local_media(source, role="workflow-en")
+            self.assertEqual(first, second)
+            self.assertEqual(mocked_run.call_count, 1)
+            command = mocked_run.call_args.args[0]
+            self.assertEqual(command[1:3], ["admin", "upload"])
+            self.assertIn("workflow-en-", command[-1])
+
     def test_generated_image_urls_accept_authoritative_result_image(self) -> None:
         response = {
             "output": [{"type": "image", "url": "https://example.com/after.png"}],

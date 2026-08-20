@@ -16,6 +16,8 @@ The CLI writes a visible DAG and state file, executes local nodes, and either ca
 
 The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. Separate target-Skill nodes generate a distinct Hook and full result, preferring Seedance 2.0. A dedicated `bgm` node calls `makaron music create` once and reuses that audio across locales. Each final node sends Hook, comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat` using built-in `tiktok-video`. The Remotion runtime creates Seed Audio first, derives Caption JSON/scene boundaries from measured timing, applies the Meta safe-zone profile, mutes all source audio, loops BGM through CTA, and exports the MP4. Only authoritative generated video outputs plus a valid contract-v2 timing manifest can satisfy the node. If Makaron's export endpoint rejects an otherwise complete design, the CLI validates that same contract before pinned local Remotion rendering. Local FFmpeg remains a probe dependency, not the final concat/amix/subtitle engine.
 
+Final-input transport is URL-first. The DAG preserves authoritative Hook/effect/BGM source URLs and recovers them from cached responses for older campaigns. Workflow and bundled CTA files are uploaded once through the Makaron backend `admin upload` endpoint and cached by SHA-256. This avoids the Makaron CLI local video/audio signed-URL PUT path, which is unreachable from some Agent sandboxes.
+
 ```text
 master Skill
     ↓ policy + input contract

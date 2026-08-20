@@ -67,3 +67,7 @@ An After image should be an exact decoded frame from the effect result, but its 
 ## Require authoritative generated images as well as videos
 
 Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, accept only a newly generated `screen-demo` video or a validated 3.5–4.5-second Makaron Remotion design; never feed that design into the 15–20-second final-ad contract. This prevents an input attachment or the wrong renderer contract from silently satisfying the node.
+
+## Keep large final inputs URL-native
+
+When an upstream cloud generation already has an authoritative public URL, store and reuse it instead of download-then-upload. Some Agent sandboxes cannot reach the Supabase/Cloudflare signed-URL PUT route used for local video/audio attachments. For unavoidable local assets, use the backend upload endpoint once, key the cache by content SHA-256, and pass the returned CDN URL to chat. Keep small images on the CLI's base64 path when available.

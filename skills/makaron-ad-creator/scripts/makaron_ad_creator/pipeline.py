@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
+from .adapter import MakaronAdapter, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
 from .media import bgm_similarity_in_cta, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
 from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt, workflow_prompt
 from .schema import LOCALE_TO_UI, ad_locales, validate_config
@@ -254,7 +254,7 @@ class Pipeline:
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError("Effect video must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("effect", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
+        self.add_artifact("effect", output, response_id=result.get("response_id"), source_url=result.get("source_url"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
 
     def _generate_hook(self, attempt: int) -> None:
         output = self.run_dir / "assets" / "hook.mp4"
@@ -268,7 +268,7 @@ class Pipeline:
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError("Hook video must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("hook", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
+        self.add_artifact("hook", output, response_id=result.get("response_id"), source_url=result.get("source_url"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
 
     def _generate_bgm(self) -> None:
         output = self.run_dir / "assets" / "bgm.mp3"
@@ -373,15 +373,32 @@ class Pipeline:
             return source_url
         return str(self.artifact("bgm"))
 
+    def _final_video_input(self, node_id: str, path: Path, *, role: str) -> str:
+        if node_id in self.state["nodes"]:
+            items = self.state["nodes"][node_id].get("artifacts", [])
+            if items:
+                source_url = str(items[0].get("source_url") or "")
+                if source_url.startswith(("https://", "http://")):
+                    return source_url
+            response_path = self.run_dir / "responses" / f"{node_id}.json"
+            if response_path.is_file():
+                generated_urls = extract_generated_video_urls(read_json(response_path))
+                if generated_urls:
+                    return generated_urls[0]
+        return self._adapter().publish_local_media(path, role=role)
+
+    def _final_video_inputs(self, locale: str) -> list[str]:
+        return [
+            self._final_video_input("hook", self.artifact("hook", ".mp4"), role="hook"),
+            self._final_video_input("effect", self.artifact("effect", ".mp4"), role="effect"),
+            self._final_video_input(f"workflow-{locale}", self._workflow_for(locale), role=f"workflow-{locale}"),
+            self._final_video_input("logo-cta", Path(self.config["assets"]["logo_cta"]), role="logo-cta"),
+        ]
+
     def _generate_final(self, locale: str, attempt: int) -> None:
         scripts = read_json(self.artifact("scripts"))
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
-        videos = [
-            self.artifact("hook", ".mp4"),
-            self.artifact("effect", ".mp4"),
-            self._workflow_for(locale),
-            Path(self.config["assets"]["logo_cta"]),
-        ]
+        videos = self._final_video_inputs(locale)
         node_id = f"final-{locale}"
         adapter = self._adapter()
         cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
@@ -654,13 +671,13 @@ class Pipeline:
         elif node_id.startswith("final-"):
             locale = node_id.split("-", 1)[1]
             scripts = read_json(self.artifact("scripts"))
-            videos = [str(self.artifact("hook", ".mp4")), str(self.artifact("effect", ".mp4")), str(self._workflow_for(locale))]
+            videos = self._final_video_inputs(locale)
             request.update({
                 "operation": "assemble_localized_ad",
                 "locale": locale,
                 "prompt": final_prompt(self.config, locale, scripts, model_preference),
                 "images": [str(self.artifact("comparison"))],
-                "videos": videos + [str(Path(self.config["assets"]["logo_cta"]))],
+                "videos": videos,
                 "audios": [self._bgm_input()],
                 "input_roles": {
                     "images": ["before_after_comparison"],
@@ -768,9 +785,9 @@ class Pipeline:
                 shutil.copy2(timing_manifest, manifest_destination)
             metadata["timing_manifest"] = str(manifest_destination.resolve())
             metadata["composition_contract_version"] = 2
-        if node_id == "bgm" and source_url:
+        if (node_id == "bgm" or node_id in {"hook", "effect"} or node_id.startswith("workflow-")) and source_url:
             if not source_url.startswith(("https://", "http://")):
-                raise AdCreatorError("bgm source_url must use HTTP or HTTPS")
+                raise AdCreatorError(f"{node_id} source_url must use HTTP or HTTPS")
             metadata["source_url"] = source_url
         self.add_artifact(node_id, destination, **metadata)
         state["status"] = "PASS"

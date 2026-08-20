@@ -214,12 +214,14 @@ class PipelineTests(unittest.TestCase):
 
         pipeline.add_artifact("scripts", scripts)
         pipeline.add_artifact("comparison", comparison)
-        pipeline.add_artifact("hook", hook)
-        pipeline.add_artifact("effect", effect)
+        pipeline.add_artifact("hook", hook, source_url="https://cdn.example.com/hook.mp4")
+        pipeline.add_artifact("effect", effect, source_url="https://cdn.example.com/effect.mp4")
         pipeline.add_artifact("bgm", bgm, source_url="https://cdn.example.com/bgm.mp3")
-        pipeline.add_artifact("workflow-en", workflow_en)
+        pipeline.add_artifact("workflow-en", workflow_en, source_url="https://cdn.example.com/workflow-en.mp4")
         node = next(item for item in pipeline.plan if item["id"] == "final-en")
-        pipeline._write_agent_request(node)
+        publisher = SimpleNamespace(publish_local_media=lambda path, role: "https://cdn.example.com/logo.mp4")
+        with patch.object(pipeline, "_adapter", return_value=publisher):
+            pipeline._write_agent_request(node)
 
         request = read_json(path.parent / "run" / "requests" / "final-en.json")
         self.assertEqual(request["operation"], "assemble_localized_ad")
@@ -234,6 +236,12 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(request["composition"]["hook_and_result_must_be_distinct"])
         self.assertFalse(request["composition"]["local_ffmpeg_audio_or_subtitle_postprocess"])
         self.assertTrue(request["composition"]["same_bgm_looped_across_full_video"])
+        self.assertEqual(request["videos"], [
+            "https://cdn.example.com/hook.mp4",
+            "https://cdn.example.com/effect.mp4",
+            "https://cdn.example.com/workflow-en.mp4",
+            "https://cdn.example.com/logo.mp4",
+        ])
 
     def test_makaron_asset_requests_are_explicit_and_locale_scoped(self) -> None:
         path = self.make_campaign()

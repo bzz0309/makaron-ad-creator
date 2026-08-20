@@ -13,8 +13,10 @@ from .util import (
     extract_media_urls,
     extract_response_id,
     json_candidates,
+    read_json,
     require_binary,
     run,
+    sha256,
     walk,
     write_json,
 )
@@ -52,8 +54,8 @@ class MakaronAdapter:
         prompt: str,
         destination: Path | None = None,
         skill_id: str | None = None,
-        images: list[Path] | None = None,
-        videos: list[Path] | None = None,
+        images: list[Path | str] | None = None,
+        videos: list[Path | str] | None = None,
         audios: list[Path | str] | None = None,
         require_generated_video: bool = False,
         require_generated_image: bool = False,
@@ -93,6 +95,7 @@ class MakaronAdapter:
             raw, urls = self._materialize(node_id, response_id, raw, required_kind=required_kind)
         response_path = self.run_dir / "responses" / f"{node_id}.json"
         write_json(response_path, {"response_id": response_id, "media_urls": urls, "response": raw})
+        selected_url: str | None = None
         if destination:
             if require_generated_video:
                 downloadable = extract_generated_video_urls(raw)
@@ -119,8 +122,54 @@ class MakaronAdapter:
                 is_video = suffix in {".mp4", ".mov", ".m4v", ".webm"} or "video" in url.lower()
                 if is_video == expected_video:
                     matching.append(url)
-            download((matching or downloadable)[0], destination)
-        return {"response_id": response_id, "media_urls": urls, "response": raw, "response_path": str(response_path)}
+            selected_url = (matching or downloadable)[0]
+            download(selected_url, destination)
+        return {
+            "response_id": response_id,
+            "media_urls": urls,
+            "source_url": selected_url,
+            "response": raw,
+            "response_path": str(response_path),
+        }
+
+    def publish_local_media(self, path: Path, *, role: str) -> str:
+        """Publish one local final-input asset through Makaron's backend upload path.
+
+        This bypasses the signed-URL PUT path used by local --video/--audio inputs,
+        which is unreachable from some Agent sandboxes. Content hashes make the
+        operation resumable and prevent duplicate uploads.
+        """
+        path = path.resolve()
+        if not path.is_file() or path.stat().st_size == 0:
+            raise AdCreatorError(f"Cannot publish missing or empty local media: {path}")
+        digest = sha256(path)
+        cache_path = self.run_dir / "published-media.json"
+        cache = read_json(cache_path) if cache_path.is_file() else {"version": 1, "items": {}}
+        cached = cache.get("items", {}).get(digest, {})
+        cached_url = str(cached.get("url") or "") if isinstance(cached, dict) else ""
+        if cached_url.startswith(("https://", "http://")):
+            return cached_url
+
+        campaign = re.sub(r"[^a-zA-Z0-9._-]+", "-", self.run_dir.parent.name).strip("-") or "campaign"
+        safe_role = re.sub(r"[^a-zA-Z0-9._-]+", "-", role).strip("-") or "media"
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "-", path.name).strip("-") or "asset"
+        storage_path = f"ad-creator/{campaign}/{safe_role}-{digest[:12]}-{safe_name}"
+        command = [self.binary, "admin", "upload", str(path), storage_path]
+        self._log(f"publish-{safe_role}", command)
+        result = run(command, timeout=900)
+        combined = f"{result.stdout}\n{result.stderr}"
+        candidates = re.findall(r"https?://[^\s\"'<>]+", combined)
+        url = next((candidate.rstrip(".,);]}") for candidate in candidates if "cdn.makaron.app" in candidate), "")
+        if not url:
+            raise AdCreatorError(f"Makaron admin upload returned no CDN URL for {path.name}")
+        cache.setdefault("items", {})[digest] = {
+            "url": url,
+            "path": str(path),
+            "role": role,
+            "storage_path": storage_path,
+        }
+        write_json(cache_path, cache)
+        return url
 
     def render_remotion_fallback(
         self,

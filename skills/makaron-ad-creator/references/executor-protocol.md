@@ -9,6 +9,7 @@ The executing Agent must:
 1. verify `project_id` is explicit and not `auto`;
 2. use `makaron chat --project <project_id>` for every generative node except `bgm`; execute `bgm` with exactly one standalone `makaron music create` call;
 3. use the request's exact prompt and attached inputs;
+   final requests use public HTTP(S) URLs for every video/audio input. Reuse generated source URLs where present; publish only unavoidable local workflow/CTA assets through `makaron admin upload`. Do not pass local video/audio paths to `makaron chat`;
 4. save the requested artifact locally;
 5. call `makaron-ad complete ...` with the node and artifact; a `final-*` node must also pass `--timing-manifest` with the contract v2 Caption/scene sidecar requested in JSON;
 6. resume `makaron-ad run` until `PASS` or `BLOCKED`.
