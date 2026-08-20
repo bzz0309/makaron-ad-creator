@@ -71,3 +71,7 @@ Uploaded source attachments can reappear in generic response URL lists. For Befo
 ## Keep large final inputs URL-native
 
 When an upstream cloud generation already has an authoritative public URL, store and reuse it instead of download-then-upload. Some Agent sandboxes cannot reach the Supabase/Cloudflare signed-URL PUT route used for local video/audio attachments. For unavoidable local assets, use the backend upload endpoint once, key the cache by content SHA-256, and pass the returned CDN URL to chat. Keep small images on the CLI's base64 path when available.
+
+## Bind persistent-project designs to the current campaign
+
+A long-lived project can contain visually similar media and music from earlier campaigns. Attachment order in the prompt is not enough: validate and overwrite the Remotion media props with the exact current campaign URLs before rendering, then retain an asset-binding manifest. This is deterministic correction of declared inputs, not creative regeneration.

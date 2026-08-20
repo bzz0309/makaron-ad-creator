@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
+from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
 from .media import bgm_similarity_in_cta, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
 from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt, workflow_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
@@ -422,6 +422,8 @@ class Pipeline:
         scripts = read_json(self.artifact("scripts"))
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
         videos = self._final_video_inputs(locale)
+        comparison_input = self._final_image_input("comparison", self.artifact("comparison"), role="comparison")
+        bgm_input = self._bgm_input()
         node_id = f"final-{locale}"
         adapter = self._adapter()
         cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
@@ -430,6 +432,12 @@ class Pipeline:
         cached_contract_valid = False
         if attempt == 1 and cached_design:
             try:
+                cached_binding_changes = bind_ad_remotion_assets(
+                    cached_design,
+                    comparison_image=comparison_input,
+                    videos=videos,
+                    bgm_url=bgm_input,
+                )
                 validate_ad_remotion_design(cached_design)
                 cached_contract_valid = True
             except AdCreatorError:
@@ -441,21 +449,41 @@ class Pipeline:
                 "render_fallback": fallback,
             }
             final_design = cached_design
+            binding_changes = cached_binding_changes
         else:
             result = adapter.chat(
                 node_id=node_id,
                 prompt=final_prompt(self.config, locale, scripts, MODELS[min(attempt - 1, len(MODELS) - 1)]),
                 skill_id=self.config.get("automation", {}).get("builder_skill_id") or None,
-                images=[self._final_image_input("comparison", self.artifact("comparison"), role="comparison")],
+                images=[comparison_input],
                 videos=videos,
-                audios=[self._bgm_input()],
+                audios=[bgm_input],
                 destination=output,
                 require_generated_video=True,
             )
             final_design = extract_remotion_design(result.get("response"))
             if not final_design:
                 raise AdCreatorError("Final Remotion output is missing the required caption/scene timing contract")
+            binding_changes = bind_ad_remotion_assets(
+                final_design,
+                comparison_image=comparison_input,
+                videos=videos,
+                bgm_url=bgm_input,
+            )
             validate_ad_remotion_design(final_design)
+            if binding_changes:
+                corrected = adapter.render_remotion_fallback(node_id, result["response"], output)
+                result["render_fallback"] = corrected
+        binding_manifest = self.run_dir / "final" / f"asset-bindings-{locale}.json"
+        write_json(binding_manifest, {
+            "comparisonImage": comparison_input,
+            "hookVideo": videos[0],
+            "resultVideo": videos[1],
+            "workflowVideo": videos[2],
+            "ctaVideo": videos[3],
+            "bgmUrl": bgm_input,
+            "corrected_stale_props": binding_changes,
+        })
         timing_manifest = self.run_dir / "final" / f"timing-manifest-{locale}.json"
         write_json(timing_manifest, final_design["props"])
         info = probe_video(output)
@@ -492,6 +520,8 @@ class Pipeline:
             tts_engine="seed-audio",
             timing_manifest=str(timing_manifest.resolve()),
             composition_contract_version=2,
+            asset_binding_manifest=str(binding_manifest.resolve()),
+            stale_project_assets_corrected=binding_changes,
             render_fallback=result.get("render_fallback"),
         )
 
@@ -564,7 +594,10 @@ class Pipeline:
             timing_source = Path(final_item["timing_manifest"])
             timing_target = delivery / f"timing-manifest-{locale}.json"
             shutil.copy2(timing_source, timing_target)
-            delivered.append({"locale": locale, "path": str(target.resolve()), "sha256": sha256(target), "timing_manifest": str(timing_target.resolve())})
+            binding_source = Path(final_item["asset_binding_manifest"])
+            binding_target = delivery / f"asset-bindings-{locale}.json"
+            shutil.copy2(binding_source, binding_target)
+            delivered.append({"locale": locale, "path": str(target.resolve()), "sha256": sha256(target), "timing_manifest": str(timing_target.resolve()), "asset_binding_manifest": str(binding_target.resolve())})
         bgm_source = self.artifact("bgm")
         bgm_target = delivery / ("bgm-source" + bgm_source.suffix.lower())
         shutil.copy2(bgm_source, bgm_target)

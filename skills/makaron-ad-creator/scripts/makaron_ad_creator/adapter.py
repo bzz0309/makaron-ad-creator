@@ -407,6 +407,41 @@ def validate_ad_remotion_design(design: dict[str, Any]) -> None:
     validate_timing_manifest(props)
 
 
+def bind_ad_remotion_assets(
+    design: dict[str, Any],
+    *,
+    comparison_image: str,
+    videos: list[str],
+    bgm_url: str,
+) -> dict[str, dict[str, str]]:
+    """Lock a persistent-project design to this campaign's exact media inputs."""
+    if len(videos) != 4:
+        raise AdCreatorError("Final asset binding requires Hook, result, workflow, and CTA videos")
+    props = design.get("props")
+    code = str(design.get("code") or "")
+    if not isinstance(props, dict):
+        raise AdCreatorError("Remotion design is missing props for asset binding")
+    expected = {
+        "comparisonImage": comparison_image,
+        "hookVideo": videos[0],
+        "resultVideo": videos[1],
+        "workflowVideo": videos[2],
+        "ctaVideo": videos[3],
+        "bgmUrl": bgm_url,
+    }
+    changes: dict[str, dict[str, str]] = {}
+    for key, value in expected.items():
+        if not isinstance(value, str) or not value.startswith(("https://", "http://")):
+            raise AdCreatorError(f"Final asset binding {key} must be an HTTP(S) URL")
+        if key not in code:
+            raise AdCreatorError(f"Remotion design code does not consume required bound prop {key}")
+        previous = str(props.get(key) or "")
+        if previous != value:
+            changes[key] = {"from": previous, "to": value}
+            props[key] = value
+    return changes
+
+
 def validate_screen_demo_remotion_design(design: dict[str, Any]) -> None:
     """Validate a bounded four-second Makaron screen-demo before local encoding."""
     try:

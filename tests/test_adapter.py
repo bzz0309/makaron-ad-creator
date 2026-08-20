@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from makaron_ad_creator.adapter import (
     MakaronAdapter,
+    bind_ad_remotion_assets,
     extract_generated_image_urls,
     extract_generated_video_urls,
     extract_json_object,
@@ -20,6 +21,27 @@ from makaron_ad_creator.util import AdCreatorError
 
 
 class AdapterTests(unittest.TestCase):
+    def test_final_asset_binding_replaces_stale_persistent_project_bgm(self) -> None:
+        keys = ("comparisonImage", "hookVideo", "resultVideo", "workflowVideo", "ctaVideo", "bgmUrl")
+        design = {
+            "code": " ".join(keys),
+            "props": {key: f"https://old.example.com/{key}" for key in keys},
+        }
+        changes = bind_ad_remotion_assets(
+            design,
+            comparison_image="https://new.example.com/comparison.png",
+            videos=[
+                "https://new.example.com/hook.mp4",
+                "https://new.example.com/result.mp4",
+                "https://new.example.com/workflow.mp4",
+                "https://new.example.com/cta.mp4",
+            ],
+            bgm_url="https://new.example.com/bgm.wav",
+        )
+        self.assertIn("bgmUrl", changes)
+        self.assertEqual(design["props"]["bgmUrl"], "https://new.example.com/bgm.wav")
+        self.assertEqual(design["props"]["hookVideo"], "https://new.example.com/hook.mp4")
+
     def test_generated_image_urls_exclude_uploaded_source_attachments(self) -> None:
         response = {
             "media_urls": ["https://example.com/uploaded-input.jpg"],
