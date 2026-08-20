@@ -248,7 +248,23 @@ def fetch_asset(url: str, cache_dir: Path) -> Path:
     curl = shutil.which("curl")
     if curl and parsed.scheme in {"http", "https"}:
         try:
-            _run([curl, "-L", "--fail", "--silent", "--show-error", url, "-o", str(partial)])
+            _run([
+                curl,
+                "-L",
+                "--fail",
+                "--silent",
+                "--show-error",
+                "--retry",
+                "3",
+                "--retry-all-errors",
+                "--retry-delay",
+                "2",
+                "--connect-timeout",
+                "60",
+                url,
+                "-o",
+                str(partial),
+            ])
         except subprocess.CalledProcessError as exc:
             partial.unlink(missing_ok=True)
             raise SyntheticError(f"Cannot download asset {url}") from exc
