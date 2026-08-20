@@ -15,6 +15,7 @@ from .util import AdCreatorError, read_json, run as run_command, sha256, write_j
 
 
 MODELS = ["seedance-2-0", "kling", "grok"]
+MAX_MAKARON_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
 def cached_final_design_matches_effect_segments(
@@ -36,6 +37,17 @@ def cached_final_design_matches_effect_segments(
         abs(scene_duration("hook") - hook_duration) <= tolerance_seconds
         and scene_duration("result") <= result_duration + tolerance_seconds
     )
+
+
+def is_non_retryable_error(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return any(marker in message for marker in (
+        "request entity too large",
+        "function_payload_too_large",
+        "unsupported locale",
+        "unknown node",
+        "must be vertical",
+    ))
 
 
 def now() -> str:
@@ -174,7 +186,7 @@ class Pipeline:
                 self._execute(node, state["attempts"])
             except Exception as exc:
                 state["last_error"] = str(exc)
-                state["status"] = "REROLL" if state["attempts"] < maximum else "BLOCKED"
+                state["status"] = "REROLL" if state["attempts"] < maximum and not is_non_retryable_error(exc) else "BLOCKED"
                 self.save()
                 if state["status"] == "BLOCKED":
                     return
@@ -420,12 +432,35 @@ class Pipeline:
                 source_url = str(items[0].get("source_url") or "")
                 if source_url.startswith(("https://", "http://")):
                     return source_url
+                if items[0].get("source") == "exact-non-overlapping-effect-segment":
+                    return self._adapter().publish_local_media(self._upload_safe_video(path, role), role=role)
             response_path = self.run_dir / "responses" / f"{node_id}.json"
             if response_path.is_file():
                 generated_urls = extract_generated_video_urls(read_json(response_path))
                 if generated_urls:
                     return generated_urls[0]
-        return self._adapter().publish_local_media(path, role=role)
+        return self._adapter().publish_local_media(self._upload_safe_video(path, role), role=role)
+
+    def _upload_safe_video(self, path: Path, role: str) -> Path:
+        """Create a 720p transport copy when Makaron's upload endpoint would reject the source."""
+        if path.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES:
+            return path
+        output = self.run_dir / "uploads" / f"{role}-720p.mp4"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        command = [
+            "ffmpeg", "-y", "-i", str(path),
+            "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
+            "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1800k",
+            "-maxrate", "2200k", "-bufsize", "4400k", "-pix_fmt", "yuv420p",
+            "-an", "-movflags", "+faststart", str(output),
+        ]
+        run_command(command)
+        info = probe_video(output)
+        if int(info["width"]) != 720 or int(info["height"]) != 1280:
+            raise AdCreatorError(f"Upload-safe {role} video must be 720x1280")
+        if output.stat().st_size > MAX_MAKARON_UPLOAD_BYTES:
+            raise AdCreatorError(f"Upload-safe {role} video still exceeds Makaron's 4 MiB request limit")
+        return output
 
     def _final_video_inputs(self, locale: str) -> list[str]:
         return [

@@ -11,7 +11,7 @@ from PIL import Image
 
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
-from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, plan_for
+from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
@@ -352,6 +352,41 @@ class PipelineTests(unittest.TestCase):
             hook_duration=2.041667,
             result_duration=3.0,
         ))
+
+    def test_derived_hook_ignores_stale_generated_response_url(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        hook = self.root / "hook.mp4"
+        hook.write_bytes(b"derived hook")
+        pipeline.add_artifact("hook", hook, source="exact-non-overlapping-effect-segment")
+        response_dir = path.parent / "run" / "responses"
+        response_dir.mkdir(parents=True, exist_ok=True)
+        write_json(response_dir / "hook.json", {"result": {"videos": [{"videoUrl": "https://stale.example.com/hook.mp4"}]}})
+        publisher = SimpleNamespace(publish_local_media=lambda media, role: "https://cdn.example.com/derived-hook.mp4")
+        with patch.object(pipeline, "_adapter", return_value=publisher):
+            resolved = pipeline._final_video_input("hook", hook, role="hook")
+        self.assertEqual(resolved, "https://cdn.example.com/derived-hook.mp4")
+
+    def test_large_final_video_gets_upload_safe_720p_proxy(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        source = self.root / "workflow.mp4"
+        source.write_bytes(b"x" * (4 * 1024 * 1024 + 1))
+
+        def fake_run(command: list[str]):
+            output = Path(command[-1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"proxy")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("makaron_ad_creator.pipeline.run_command", side_effect=fake_run), \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value={"width": 720, "height": 1280}):
+            proxy = pipeline._upload_safe_video(source, "workflow-en")
+        self.assertEqual(proxy.name, "workflow-en-720p.mp4")
+        self.assertEqual(proxy.read_bytes(), b"proxy")
+
+    def test_payload_too_large_is_not_retried(self) -> None:
+        self.assertTrue(is_non_retryable_error(AdCreatorError("Error 413: Request Entity Too Large")))
 
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()
