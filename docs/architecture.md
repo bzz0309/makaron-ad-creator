@@ -14,9 +14,9 @@ A single large Skill can describe the workflow, but it cannot reliably retain no
 
 The CLI writes a visible DAG and state file, executes local nodes, and either calls Makaron directly or pauses on a machine-readable request for another Agent. The same campaign can therefore move between agents without re-planning or losing provenance.
 
-The npm package owns both the complete fixed Makaron Logo CTA master and its same-source silent three-second upload-safe excerpt. Campaign configs resolve the portable asset inside the package, so remote Agents never depend on the original contributor's Desktop path. Separate target-Skill nodes generate a distinct Hook and full result, preferring Seedance 2.0. A dedicated `bgm` node calls `makaron music create` once and reuses that audio across locales. Each final node sends Hook, comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat` using built-in `tiktok-video`. The Remotion runtime creates Seed Audio first, derives Caption JSON/scene boundaries from measured timing, applies the Meta safe-zone profile, mutes all source audio, loops BGM through CTA, and exports the MP4. Only authoritative generated video outputs plus a valid contract-v2 timing manifest can satisfy the node. If Makaron's export endpoint rejects an otherwise complete design, the CLI validates that same contract before pinned local Remotion rendering. Local FFmpeg remains a probe dependency, not the final concat/amix/subtitle engine.
+The npm package owns both the complete fixed Makaron Logo CTA master and its same-source silent three-second upload-safe excerpt. Campaign configs resolve the portable asset inside the package, so remote Agents never depend on the original contributor's Desktop path. One target-Skill node generates a continuous Effect, preferring Seedance 2.0; deterministic local nodes extract non-overlapping Hook and Result ranges and record the common source hash. A dedicated `bgm` node calls `makaron music create` once and reuses that audio across locales. Each final node sends Hook, comparison, Result, localized v5 workflow, fixed CTA, BGM, and script to one project-bound `makaron chat` using built-in `tiktok-video`. The Remotion runtime creates Seed Audio first, derives Caption JSON/scene boundaries from measured timing, applies the Meta safe-zone profile, mutes all source audio, loops BGM through CTA, and exports the MP4. Only authoritative generated video outputs plus a valid contract-v2 timing manifest can satisfy the node. If Makaron's export endpoint rejects an otherwise complete design, the CLI validates that same contract before pinned local Remotion rendering. Local FFmpeg may extract exact Effect time ranges, but it is not the final concat/amix/subtitle engine.
 
-Final-input transport is URL-first. The DAG preserves authoritative Hook/effect/BGM source URLs and recovers them from cached responses for older campaigns. Workflow and bundled CTA files are uploaded once through the Makaron backend `admin upload` endpoint and cached by SHA-256. This avoids the Makaron CLI local video/audio signed-URL PUT path, which is unreachable from some Agent sandboxes.
+Final-input transport is URL-first. The DAG preserves authoritative BGM/comparison URLs and recovers them from cached responses for older campaigns. Derived Hook/Result, v5 workflow, and bundled CTA files are uploaded once through the Makaron backend `admin upload` endpoint and cached by SHA-256. This avoids the Makaron CLI local video/audio signed-URL PUT path, which is unreachable from some Agent sandboxes.
 
 ```text
 master Skill
@@ -24,8 +24,8 @@ master Skill
 global makaron-ad Node launcher
     ↓ portable runtime + bundled dependencies
 Python orchestration core
-    ├── local: validate / QC / package / encode unchanged Makaron Remotion design only when cloud export is forbidden
-    ├── Makaron: script / Before / distinct target-Skill Hook + result / best source-frame After / comparison / localized screen-demo / final
+    ├── local: Effect segment extraction / localized v5 workflow / validate / QC / package / encode unchanged final Remotion design only when cloud export is forbidden
+    ├── Makaron: script / Before / one target-Skill Effect / best source-frame After / comparison / final
     └── Agent protocol: request.json → artifact → complete → resume
 ```
 
@@ -35,7 +35,7 @@ Rights/consent, claim truth, initial persistent project binding, and publication
 
 ## Source-package resolution
 
-- Use the user-supplied v5 iOS baseline frames as the visual authority supplied to Makaron's public `screen-demo` Skill. Keep the old renderer only for explicit compatibility work; it is not an active production node.
+- Run the user-supplied v5 `edit-makaron-app-workflow-recording` synthetic renderer as the production workflow node. Pass the real Marketplace Skill ID and require its locale-specific QC, keyframe sheet, and version-2 manifest; do not replace it with generic `screen-demo`.
 - Do not depend on the environment-level `social-ad-creator` Skill; it was not part of the user's source package.
 - Retain recording mode only for explicitly supplied genuine footage.
 - Replace the old hard-coded project and `--project auto` instructions.

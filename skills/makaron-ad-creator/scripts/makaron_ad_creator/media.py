@@ -23,6 +23,57 @@ def extract_after_frame(video: Path, output: Path) -> Path:
     return output
 
 
+def effect_segment_plan(video: Path, *, preferred_hook_seconds: float = 2.5, minimum_result_seconds: float = 3.0) -> dict[str, float]:
+    """Split one target-Skill result into non-overlapping Hook and Result ranges."""
+    duration = float(probe_video(video)["duration"])
+    if duration < 4.5:
+        raise AdCreatorError(
+            f"Target-Skill effect is too short to derive distinct Hook and Result segments: {duration:.3f}s"
+        )
+    hook_duration = min(preferred_hook_seconds, duration - minimum_result_seconds)
+    if hook_duration < 1.5:
+        raise AdCreatorError("Target-Skill effect leaves less than 1.5 seconds for an extracted Hook")
+    return {
+        "source_duration": duration,
+        "hook_start": 0.0,
+        "hook_duration": hook_duration,
+        "result_start": hook_duration,
+        "result_duration": duration - hook_duration,
+    }
+
+
+def extract_video_segment(video: Path, output: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+    """Encode an exact time range from a source video without generating new content."""
+    ffmpeg = require_binary("ffmpeg")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    run([
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video),
+        "-ss",
+        f"{start_seconds:.3f}",
+        "-t",
+        f"{duration_seconds:.3f}",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ], timeout=600)
+    return output
+
+
 def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     target_w, target_h = size
     scale = max(target_w / image.width, target_h / image.height)

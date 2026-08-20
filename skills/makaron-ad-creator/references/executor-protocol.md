@@ -24,12 +24,13 @@ Never mark a request complete from prose alone. The artifact must exist and matc
 |---|---|
 | `generate_json` | UTF-8 JSON with exactly five strings under each selected locale key and no unselected locale keys |
 | `generate_image` | One decoded PNG/JPEG/WebP |
-| `invoke_skill_video` | One 9:16 MP4 created by the exact target Marketplace Skill, targeting 1080×1920 and never below 720×1280; Hook/result requests are distinct artifacts |
+| `invoke_skill_video` | One continuous 9:16 Effect MP4 created by the exact target Marketplace Skill, targeting 1080×1920 and never below 720×1280; the CLI derives Hook and Result locally as exact non-overlapping ranges |
 | `select_exact_effect_keyframe` | One exact decoded source frame selected after full-clip analysis; no fixed percentage and no regeneration |
 | `compose_comparison_in_makaron` | One 1080×1920 Before/After image composed in Makaron from locked source pixels |
-| `generate_screen_demo_in_makaron` | One 3.5–4.5 second locale-correct vertical MP4 designed by public `screen-demo` with v5 iOS references; materialize in Makaron first, or locally encode only the unchanged validated Makaron design when cloud export is forbidden |
 | `generate_instrumental_bgm` | One at-least-20-second instrumental audio file plus its generated HTTP(S) source URL; call `complete` with `--source-url` so chat can attach the long BGM without local upload limits |
 | `assemble_localized_ad` | One complete localized five-part 9:16 H.264/AAC MP4, target 1080×1920/minimum 720×1280, rendered by one project-bound Makaron chat through the `tiktok-video` Remotion builder; Caption JSON timings stay inside assigned scenes and Meta safe zones; inputs include CTA and BGM, with no local final post-process |
+
+Hook, Result, and localized workflow are deterministic CLI nodes, so another Agent never receives separate generation requests for them. The CLI splits one Effect by timestamp and runs bundled v5 `workflow_recording.py synthesize` with the resolved Skill ID and mapped UI locale before emitting the final assembly request.
 
 ## Recovery
 

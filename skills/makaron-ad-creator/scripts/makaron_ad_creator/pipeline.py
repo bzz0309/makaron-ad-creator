@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
-from .media import bgm_similarity_in_cta, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
-from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt, workflow_prompt
+from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
+from .media import bgm_similarity_in_cta, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
+from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
-from .util import AdCreatorError, read_json, sha256, write_json
+from .util import AdCreatorError, read_json, run as run_command, sha256, write_json
 
 
 MODELS = ["seedance-2-0", "kling", "grok"]
@@ -25,8 +26,9 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "validate", "kind": "local", "depends_on": []},
         {"id": "scripts", "kind": "generate_json", "depends_on": ["validate"]},
         {"id": "before", "kind": "generate_image", "depends_on": ["validate"]},
-        {"id": "hook", "kind": "generate_video", "depends_on": ["validate"]},
         {"id": "effect", "kind": "generate_video", "depends_on": ["validate"]},
+        {"id": "hook", "kind": "local", "depends_on": ["effect"]},
+        {"id": "result", "kind": "local", "depends_on": ["effect"]},
         {"id": "bgm", "kind": "generate_audio", "depends_on": ["validate"]},
         {"id": "after", "kind": "generate_image", "depends_on": ["effect"]},
         {"id": "comparison", "kind": "generate_image", "depends_on": ["before", "after"]},
@@ -35,14 +37,14 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
     for locale in selected_locales:
         nodes.append({
             "id": f"workflow-{locale}",
-            "kind": "generate_video",
+            "kind": "local",
             "depends_on": ["validate"],
         })
     for locale in selected_locales:
         nodes.append({
             "id": f"final-{locale}",
             "kind": "generate_video",
-            "depends_on": ["scripts", "comparison", "hook", "effect", f"workflow-{locale}", "bgm"],
+            "depends_on": ["scripts", "comparison", "hook", "result", f"workflow-{locale}", "bgm"],
         })
     nodes += [
         {"id": "qc", "kind": "local", "depends_on": [f"final-{locale}" for locale in selected_locales]},
@@ -171,7 +173,9 @@ class Pipeline:
         elif node_id == "before":
             self._generate_before()
         elif node_id == "hook":
-            self._generate_hook(attempt)
+            self._derive_effect_segment("hook")
+        elif node_id == "result":
+            self._derive_effect_segment("result")
         elif node_id == "effect":
             self._generate_effect(attempt)
         elif node_id == "bgm":
@@ -256,19 +260,27 @@ class Pipeline:
             raise AdCreatorError("Effect video must be vertical 9:16 and at least 720x1280")
         self.add_artifact("effect", output, response_id=result.get("response_id"), source_url=result.get("source_url"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
 
-    def _generate_hook(self, attempt: int) -> None:
-        output = self.run_dir / "assets" / "hook.mp4"
-        result = self._adapter().chat(
-            node_id="hook",
-            prompt=hook_prompt(self.config, MODELS[min(attempt - 1, len(MODELS) - 1)]),
-            skill_id=self.config["target_skill"]["id"],
-            images=[Path(self.config["input_image"])],
-            destination=output,
-        )
+    def _derive_effect_segment(self, role: str) -> None:
+        if role not in {"hook", "result"}:
+            raise AdCreatorError(f"Unknown target-Skill segment role: {role}")
+        effect = self.artifact("effect", ".mp4")
+        plan = effect_segment_plan(effect)
+        start = float(plan[f"{role}_start"])
+        duration = float(plan[f"{role}_duration"])
+        output = self.run_dir / "assets" / f"{role}.mp4"
+        extract_video_segment(effect, output, start_seconds=start, duration_seconds=duration)
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
-            raise AdCreatorError("Hook video must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("hook", output, response_id=result.get("response_id"), source_url=result.get("source_url"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
+            raise AdCreatorError(f"Derived {role} video must be vertical 9:16 and at least 720x1280")
+        self.add_artifact(
+            role,
+            output,
+            source="exact-non-overlapping-effect-segment",
+            source_effect_sha256=sha256(effect),
+            start_seconds=start,
+            duration_seconds=duration,
+            resolution=f"{info['width']}x{info['height']}",
+        )
 
     def _generate_bgm(self) -> None:
         output = self.run_dir / "assets" / "bgm.mp3"
@@ -316,52 +328,59 @@ class Pipeline:
             raise AdCreatorError("Makaron comparison must be vertical 9:16 and at least 720x1280")
         self.add_artifact("comparison", output, response_id=result.get("response_id"), source_url=result.get("source_url"), source="makaron-composition", resolution=f"{info['width']}x{info['height']}")
 
-    def _workflow_references(self, ad_locale: str) -> list[Path]:
-        main_skill_dir = Path(__file__).resolve().parents[2]
-        ui_locale = LOCALE_TO_UI[ad_locale]
-        reference_dir = main_skill_dir.parent / "edit-makaron-app-workflow-recording" / "assets" / "ui-baseline" / ui_locale
-        references = [
-            reference_dir / "home-top.png",
-            reference_dir / "home-target.png",
-            reference_dir / "detail.png",
-        ]
-        missing = [path for path in references if not path.is_file()]
-        if missing:
-            raise AdCreatorError(f"Missing bundled v5 workflow reference: {missing[0]}")
-        return references
-
     def _generate_workflow(self, ad_locale: str) -> None:
         node_id = f"workflow-{ad_locale}"
         output = self.run_dir / "workflow" / f"workflow-{ad_locale}.mp4"
-        images = [Path(self.config["input_image"]), *self._workflow_references(ad_locale)]
-        adapter = self._adapter()
-        cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
-        cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
-        cached_design = extract_remotion_design(cached_response) if cached_response else None
-        if cached_design:
-            try:
-                validate_screen_demo_remotion_design(cached_design)
-            except AdCreatorError:
-                cached_design = None
-        if cached_design:
-            fallback = adapter.render_remotion_fallback(node_id, cached_response, output, contract="screen-demo")
-            result = {"response_id": cached_response.get("response_id"), "render_fallback": fallback}
-        else:
-            result = adapter.chat(
-                node_id=node_id,
-                prompt=workflow_prompt(self.config, ad_locale),
-                skill_id="screen-demo",
-                images=images,
-                destination=output,
-                require_generated_video=True,
-                remotion_contract="screen-demo",
-            )
+        workflow_skill = Path(__file__).resolve().parents[3] / "edit-makaron-app-workflow-recording"
+        script = workflow_skill / "scripts" / "workflow_recording.py"
+        if not script.is_file():
+            raise AdCreatorError(f"Bundled v5 workflow Skill is missing: {script}")
+        generated_dir = self.run_dir / "workflow" / f"v5-{ad_locale}"
+        command = [
+            sys.executable,
+            str(script),
+            "synthesize",
+            "--skill",
+            self.config["target_skill"]["id"],
+            "--locales",
+            LOCALE_TO_UI[ad_locale],
+            "--output-dir",
+            str(generated_dir),
+            "--cache-dir",
+            str(self.run_dir / "workflow" / ".v5-cache"),
+        ]
+        completed = run_command(command, timeout=1200)
+        try:
+            result = json.loads(completed.stdout)
+            generated = result["outputs"][0]
+            generated_video = Path(generated["output"])
+            qc_path = Path(generated["qc"])
+            manifest_path = Path(result["manifest"])
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise AdCreatorError("v5 workflow Skill returned an invalid result manifest") from exc
+        if not generated_video.is_file() or not qc_path.is_file() or not manifest_path.is_file():
+            raise AdCreatorError("v5 workflow Skill did not create its video, QC, and manifest outputs")
+        qc = read_json(qc_path)
+        if not qc.get("pass"):
+            raise AdCreatorError("v5 workflow Skill failed deterministic visual or technical QC")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if generated_video.resolve() != output.resolve():
+            shutil.copy2(generated_video, output)
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
-            raise AdCreatorError("Makaron screen-demo workflow must be vertical 9:16 and at least 720x1280")
+            raise AdCreatorError("v5 Makaron workflow must be vertical 9:16 and at least 720x1280")
         if not 3.5 <= float(info["duration"]) <= 4.5:
-            raise AdCreatorError("Makaron screen-demo workflow must be 3.5-4.5 seconds")
-        self.add_artifact(node_id, output, response_id=result.get("response_id"), source="makaron-screen-demo", ui_locale=LOCALE_TO_UI[ad_locale], resolution=f"{info['width']}x{info['height']}", render_fallback=result.get("render_fallback"))
+            raise AdCreatorError("v5 Makaron workflow must be 3.5-4.5 seconds")
+        self.add_artifact(
+            node_id,
+            output,
+            source="edit-makaron-app-workflow-recording-v5",
+            ui_locale=LOCALE_TO_UI[ad_locale],
+            resolution=f"{info['width']}x{info['height']}",
+            qc_manifest=str(qc_path.resolve()),
+            workflow_manifest=str(manifest_path.resolve()),
+            keyframes=generated.get("keyframes"),
+        )
 
     def _workflow_for(self, ad_locale: str) -> Path:
         return self.artifact(f"workflow-{ad_locale}", ".mp4")
@@ -390,7 +409,7 @@ class Pipeline:
     def _final_video_inputs(self, locale: str) -> list[str]:
         return [
             self._final_video_input("hook", self.artifact("hook", ".mp4"), role="hook"),
-            self._final_video_input("effect", self.artifact("effect", ".mp4"), role="effect"),
+            self._final_video_input("result", self.artifact("result", ".mp4"), role="result"),
             self._final_video_input(f"workflow-{locale}", self._workflow_for(locale), role=f"workflow-{locale}"),
             self._final_video_input("logo-cta", self._cta_input_path(), role="logo-cta"),
         ]
@@ -528,8 +547,25 @@ class Pipeline:
     def _qc(self) -> None:
         expected = self.config["output"]
         bgm_info = probe_audio(self.artifact("bgm"))
+        hook_item = self.state["nodes"]["hook"]["artifacts"][0]
+        result_item = self.state["nodes"]["result"]["artifacts"][0]
+        same_effect_source = bool(
+            hook_item.get("source_effect_sha256")
+            and hook_item.get("source_effect_sha256") == result_item.get("source_effect_sha256")
+        )
+        hook_end = float(hook_item.get("start_seconds", -1)) + float(hook_item.get("duration_seconds", -1))
+        result_start = float(result_item.get("start_seconds", -1))
+        non_overlapping = hook_end <= result_start and float(hook_item.get("start_seconds", -1)) >= 0
+        if not same_effect_source or not non_overlapping:
+            raise AdCreatorError("Hook/Result provenance must prove non-overlapping ranges from one Effect source")
         report: dict[str, Any] = {
             "status": "PASS",
+            "effect_segments": {
+                "same_source_sha256": hook_item["source_effect_sha256"],
+                "hook": {"start_seconds": hook_item["start_seconds"], "duration_seconds": hook_item["duration_seconds"]},
+                "result": {"start_seconds": result_item["start_seconds"], "duration_seconds": result_item["duration_seconds"]},
+                "non_overlapping": True,
+            },
             "audio_mix": {
                 "bgm": bgm_info,
                 "same_bgm_for_all_locales": True,
@@ -683,8 +719,6 @@ class Pipeline:
             request.update({"operation": "generate_json", "prompt": script_prompt(self.config), "expected": "scripts.json"})
         elif node_id == "before":
             request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [self.config["input_image"]], "expected": "before.png"})
-        elif node_id == "hook":
-            request.update({"operation": "invoke_skill_video", "prompt": hook_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "hook.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "effect":
             request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "after":
@@ -702,18 +736,6 @@ class Pipeline:
                 "images": [str(self.artifact("before")), str(self.artifact("after"))],
                 "input_roles": ["locked_before", "locked_exact_effect_keyframe"],
                 "expected": "comparison.png",
-            })
-        elif node_id.startswith("workflow-"):
-            locale = node_id.split("-", 1)[1]
-            request.update({
-                "operation": "generate_screen_demo_in_makaron",
-                "prompt": workflow_prompt(self.config, locale),
-                "images": [self.config["input_image"], *[str(path) for path in self._workflow_references(locale)]],
-                "builder_skill_id": "screen-demo",
-                "ui_locale": LOCALE_TO_UI[locale],
-                "synthetic_not_real_recording": True,
-                "expected": f"workflow-{locale}.mp4",
-                "minimum_resolution": "720x1280",
             })
         elif node_id == "bgm":
             request.update({
@@ -738,7 +760,7 @@ class Pipeline:
                 "audios": [self._bgm_input()],
                 "input_roles": {
                     "images": ["before_after_comparison"],
-                    "videos": ["distinct_hook", "effect_result", "localized_workflow", "fixed_logo_cta"],
+                    "videos": ["effect_derived_hook", "non_overlapping_effect_result", "localized_v5_workflow", "fixed_logo_cta"],
                     "audios": ["campaign_bgm"],
                 },
                 "composition": {
@@ -754,6 +776,7 @@ class Pipeline:
                     "subtitle_style": {"color": "white", "stroke": "black", "background": "none", "max_lines": 2, "max_characters_per_line": 20},
                     "safe_zone": self.config["output"]["safe_zone"],
                     "hook_and_result_must_be_distinct": True,
+                    "hook_and_result_share_exact_effect_source": True,
                     "all_source_video_audio_muted": True,
                     "cta_source_audio_muted": True,
                     "bgm_volume": self.config["audio"]["bgm_volume"],

@@ -12,7 +12,7 @@ from PIL import Image
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, plan_for
-from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, final_prompt, hook_prompt, workflow_prompt
+from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -112,8 +112,18 @@ class PipelineTests(unittest.TestCase):
             final = next(node for node in plan if node["id"] == f"final-{locale}")
             self.assertIn("bgm", final["depends_on"])
             self.assertIn(f"workflow-{locale}", final["depends_on"])
+            self.assertIn("hook", final["depends_on"])
+            self.assertIn("result", final["depends_on"])
+            self.assertNotIn("effect", final["depends_on"])
         self.assertEqual(next(node for node in plan if node["id"] == "after")["kind"], "generate_image")
         self.assertEqual(next(node for node in plan if node["id"] == "comparison")["kind"], "generate_image")
+        effect = next(node for node in plan if node["id"] == "effect")
+        hook = next(node for node in plan if node["id"] == "hook")
+        result = next(node for node in plan if node["id"] == "result")
+        self.assertEqual(effect["kind"], "generate_video")
+        self.assertEqual(hook, {"id": "hook", "kind": "local", "depends_on": ["effect"]})
+        self.assertEqual(result, {"id": "result", "kind": "local", "depends_on": ["effect"]})
+        self.assertEqual(next(node for node in plan if node["id"] == "workflow-en")["kind"], "local")
 
     def test_campaign_uses_bundled_fixed_logo_cta(self) -> None:
         path = self.make_campaign()
@@ -159,7 +169,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Logo CTA exactly 3.0s", prompt)
         self.assertIn("15.0-20.0 second five-part final video", prompt)
         self.assertIn("aiming for 18.0 seconds", prompt)
-        self.assertIn("Hook 2.5-5.0s", prompt)
+        self.assertIn("full duration of attached video 1 for Hook", prompt)
         self.assertIn("internal Remotion workflow", prompt)
         self.assertIn("Seed Audio voiceover", prompt)
         self.assertIn("Loop audio 1 as the same continuous BGM", prompt)
@@ -169,13 +179,15 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("older 140px", prompt)
         self.assertIn("y=270", prompt)
         self.assertIn("at most 20 visible characters", prompt)
-        self.assertIn("video 1 is the distinct target-Skill Hook", prompt)
+        self.assertIn("video 1 is the opening Hook segment extracted from the target-Skill effect source", prompt)
+        self.assertIn("never request or invent a separately generated Hook", prompt)
         self.assertIn("minimum 720x1280", prompt)
         self.assertIn("do not ask the CLI to perform local FFmpeg", prompt)
-        hook = hook_prompt(config)
-        self.assertIn("seedance-2-0", hook)
-        self.assertIn("never below 720x1280", hook)
-        self.assertIn("not the full result", hook)
+        effect = effect_prompt(config)
+        self.assertIn("seedance-2-0", effect)
+        self.assertIn("one 8-second vertical effect source", effect)
+        self.assertIn("opening range as Hook", effect)
+        self.assertIn("never below 720x1280", effect)
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
@@ -213,19 +225,19 @@ class PipelineTests(unittest.TestCase):
         write_json(scripts, {"en": [f"line {index}" for index in range(5)]})
         comparison = self.root / "comparison.png"
         hook = self.root / "hook.mp4"
-        effect = self.root / "effect.mp4"
+        result = self.root / "result.mp4"
         bgm = self.root / "bgm.mp3"
         workflow_en = self.root / "workflow-en.mp4"
         comparison.write_bytes(b"comparison")
         hook.write_bytes(b"hook")
-        effect.write_bytes(b"effect")
+        result.write_bytes(b"result")
         bgm.write_bytes(b"bgm")
         workflow_en.write_bytes(b"workflow")
 
         pipeline.add_artifact("scripts", scripts)
         pipeline.add_artifact("comparison", comparison, source_url="https://cdn.example.com/comparison.png")
         pipeline.add_artifact("hook", hook, source_url="https://cdn.example.com/hook.mp4")
-        pipeline.add_artifact("effect", effect, source_url="https://cdn.example.com/effect.mp4")
+        pipeline.add_artifact("result", result, source_url="https://cdn.example.com/result.mp4")
         pipeline.add_artifact("bgm", bgm, source_url="https://cdn.example.com/bgm.mp3")
         pipeline.add_artifact("workflow-en", workflow_en, source_url="https://cdn.example.com/workflow-en.mp4")
         node = next(item for item in pipeline.plan if item["id"] == "final-en")
@@ -237,18 +249,20 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(request["operation"], "assemble_localized_ad")
         self.assertEqual(request["audios"], ["https://cdn.example.com/bgm.mp3"])
         self.assertEqual(request["input_roles"]["videos"][-1], "fixed_logo_cta")
-        self.assertEqual(request["input_roles"]["videos"][0], "distinct_hook")
+        self.assertEqual(request["input_roles"]["videos"][0], "effect_derived_hook")
+        self.assertEqual(request["input_roles"]["videos"][1], "non_overlapping_effect_result")
         self.assertEqual(request["composition"]["engine"], "makaron-agent-remotion")
         self.assertEqual(request["composition"]["builder_skill_id"], "tiktok-video")
         self.assertEqual(request["composition"]["tts_engine"], "seed-audio")
         self.assertEqual(request["composition"]["caption_format"], "remotion-caption-json")
         self.assertTrue(request["composition"]["scene_bound_caption_timing"])
         self.assertTrue(request["composition"]["hook_and_result_must_be_distinct"])
+        self.assertTrue(request["composition"]["hook_and_result_share_exact_effect_source"])
         self.assertFalse(request["composition"]["local_ffmpeg_audio_or_subtitle_postprocess"])
         self.assertTrue(request["composition"]["same_bgm_looped_across_full_video"])
         self.assertEqual(request["videos"], [
             "https://cdn.example.com/hook.mp4",
-            "https://cdn.example.com/effect.mp4",
+            "https://cdn.example.com/result.mp4",
             "https://cdn.example.com/workflow-en.mp4",
             "https://cdn.example.com/logo.mp4",
         ])
@@ -270,7 +284,7 @@ class PipelineTests(unittest.TestCase):
         pipeline.add_artifact("before", before)
         pipeline.add_artifact("after", after)
 
-        for node_id in ("after", "comparison", "workflow-en"):
+        for node_id in ("after", "comparison"):
             node = next(item for item in pipeline.plan if item["id"] == node_id)
             pipeline._write_agent_request(node)
 
@@ -280,13 +294,78 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("82%", after_request["prompt"])
         comparison_request = read_json(path.parent / "run" / "requests" / "comparison.json")
         self.assertEqual(comparison_request["operation"], "compose_comparison_in_makaron")
-        workflow_request = read_json(path.parent / "run" / "requests" / "workflow-en.json")
-        self.assertEqual(workflow_request["builder_skill_id"], "screen-demo")
-        self.assertEqual(workflow_request["ui_locale"], "en")
-        self.assertTrue(workflow_request["synthetic_not_real_recording"])
-        self.assertIn("screen-demo", workflow_prompt(config, "en"))
         self.assertIn("strongest", after_prompt(config))
         self.assertIn("Makaron", comparison_prompt(config))
+
+    def test_hook_and_result_are_exact_non_overlapping_effect_segments(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        effect = self.root / "effect.mp4"
+        effect.write_bytes(b"one target skill effect source")
+        pipeline.add_artifact("effect", effect)
+
+        def fake_extract(source: Path, output: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+            self.assertEqual(source.resolve(), effect.resolve())
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(f"{start_seconds:.1f}-{duration_seconds:.1f}".encode())
+            return output
+
+        segment_plan = {
+            "source_duration": 8.0,
+            "hook_start": 0.0,
+            "hook_duration": 2.5,
+            "result_start": 2.5,
+            "result_duration": 5.5,
+        }
+        video_info = {"width": 1080, "height": 1920, "duration": 2.5}
+        with patch("makaron_ad_creator.pipeline.effect_segment_plan", return_value=segment_plan), \
+             patch("makaron_ad_creator.pipeline.extract_video_segment", side_effect=fake_extract), \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value=video_info):
+            pipeline._derive_effect_segment("hook")
+            pipeline._derive_effect_segment("result")
+
+        hook_meta = pipeline.state["nodes"]["hook"]["artifacts"][0]
+        result_meta = pipeline.state["nodes"]["result"]["artifacts"][0]
+        self.assertEqual(hook_meta["source_effect_sha256"], result_meta["source_effect_sha256"])
+        self.assertLessEqual(
+            hook_meta["start_seconds"] + hook_meta["duration_seconds"],
+            result_meta["start_seconds"],
+        )
+        self.assertEqual(hook_meta["source"], "exact-non-overlapping-effect-segment")
+        self.assertEqual(result_meta["source"], "exact-non-overlapping-effect-segment")
+
+    def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        generated = self.root / "crystal-ballet-workflow-en-synthetic.mp4"
+        qc = self.root / "crystal-ballet-workflow-en-synthetic.mp4.qc.json"
+        keyframes = self.root / "crystal-ballet-workflow-en-synthetic.keyframes.jpg"
+        manifest = self.root / "crystal-ballet-synthetic-manifest.json"
+        generated.write_bytes(b"v5 workflow")
+        keyframes.write_bytes(b"keyframes")
+        write_json(qc, {"pass": True})
+        write_json(manifest, {"version": 2, "generated_with": "edit-makaron-app-workflow-recording"})
+        response = {
+            "pass": True,
+            "manifest": str(manifest),
+            "outputs": [{"output": str(generated), "qc": str(qc), "keyframes": str(keyframes)}],
+        }
+        completed = SimpleNamespace(stdout=json.dumps(response), stderr="", returncode=0)
+        with patch("makaron_ad_creator.pipeline.run_command", return_value=completed) as mocked_run, \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value={"width": 1080, "height": 1920, "duration": 4.0}):
+            pipeline._generate_workflow("en")
+
+        command = mocked_run.call_args.args[0]
+        self.assertIn("workflow_recording.py", command[1])
+        self.assertIn("synthesize", command)
+        self.assertEqual(command[command.index("--skill") + 1], "skill-1")
+        self.assertEqual(command[command.index("--locales") + 1], "en")
+        self.assertNotIn("screen-demo", command)
+        artifact = pipeline.state["nodes"]["workflow-en"]["artifacts"][0]
+        self.assertEqual(artifact["source"], "edit-makaron-app-workflow-recording-v5")
+        self.assertEqual(artifact["ui_locale"], "en")
+        self.assertEqual(artifact["qc_manifest"], str(qc.resolve()))
+        self.assertEqual(artifact["workflow_manifest"], str(manifest.resolve()))
 
     def test_schema_rejects_wrong_ui_mapping_for_selected_locale(self) -> None:
         path = self.make_campaign()

@@ -28,11 +28,7 @@ if (![width, height, fps, durationInSeconds, durationInFrames].every(Number.isFi
   throw new Error('The Makaron Remotion design has invalid dimensions or timing.');
 }
 const isVertical916 = Math.abs(width / height - 9 / 16) <= 0.01;
-const durationValid = contract === 'screen-demo'
-  ? durationInSeconds >= 3.5 && durationInSeconds <= 4.5
-  : contract === 'ad-final'
-    ? durationInSeconds >= 15 && durationInSeconds <= 20
-    : false;
+const durationValid = contract === 'ad-final' && durationInSeconds >= 15 && durationInSeconds <= 20;
 if (width < 720 || height < 1280 || !isVertical916 || fps !== 30 || !durationValid) {
   throw new Error(`Refusing unexpected Remotion contract: ${width}x${height}, ${fps}fps, ${durationInSeconds}s`);
 }

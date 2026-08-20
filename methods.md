@@ -52,9 +52,9 @@ Do not turn one finished ad into a universal frame chart. Measure several exampl
 
 Generate the continuous Seed Audio take first, retain Caption JSON with measured `startMs`/`endMs`, and make scene boundaries contain their assigned lines. A scene may expand to fit natural speech; a subtitle or spoken line must never spill into the next semantic beat. Require a machine-readable timing contract before accepting a locally rendered Remotion fallback.
 
-## Separate Hook curiosity from result payoff
+## Derive Hook and Result from one target-Skill Effect
 
-Generate Hook and result as independent calls to the same target Skill. The Hook teases an intermediate moment; the result shows the complete payoff once. Reject reuse of the same shot, action, camera path, or retimed frames across both segments.
+Invoke the target Skill once for one continuous Effect source. Extract the opening Hook and later Result as exact non-overlapping ranges, preserve the Effect SHA-256 in both artifact records, and reject missing or overlapping provenance during QC. This avoids a second generation drifting away from the selected Skill while still preventing repeated source frames in the final edit.
 
 ## Treat platform minimum and delivery target separately
 
@@ -66,7 +66,7 @@ An After image should be an exact decoded frame from the effect result, but its 
 
 ## Require authoritative generated images as well as videos
 
-Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, accept only a newly generated `screen-demo` video or a validated 3.5–4.5-second Makaron Remotion design; never feed that design into the 15–20-second final-ad contract. This prevents an input attachment or the wrong renderer contract from silently satisfying the node.
+Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, run the bundled v5 synthetic renderer and require its MP4, keyframe sheet, QC JSON, and version-2 manifest. This prevents an input attachment or an unrelated generic workflow design from silently satisfying the node.
 
 ## Keep large final inputs URL-native
 

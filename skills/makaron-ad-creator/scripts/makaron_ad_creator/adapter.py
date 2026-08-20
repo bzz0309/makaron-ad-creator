@@ -185,12 +185,9 @@ class MakaronAdapter:
                 f"Makaron returned no exported final MP4 or reusable Remotion design for {node_id}; "
                 "attached source videos are not final artifacts"
             )
-        if contract == "ad-final":
-            validate_ad_remotion_design(design)
-        elif contract == "screen-demo":
-            validate_screen_demo_remotion_design(design)
-        else:
+        if contract != "ad-final":
             raise AdCreatorError(f"Unknown Remotion fallback contract: {contract}")
+        validate_ad_remotion_design(design)
         design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
         write_json(design_path, design)
         script = Path(__file__).resolve().parents[1] / "remotion_fallback" / "render.mjs"
@@ -440,21 +437,6 @@ def bind_ad_remotion_assets(
             changes[key] = {"from": previous, "to": value}
             props[key] = value
     return changes
-
-
-def validate_screen_demo_remotion_design(design: dict[str, Any]) -> None:
-    """Validate a bounded four-second Makaron screen-demo before local encoding."""
-    try:
-        width = int(design.get("width"))
-        height = int(design.get("height"))
-        fps = float(design.get("animation", {}).get("fps"))
-        duration = float(design.get("animation", {}).get("durationInSeconds"))
-    except (TypeError, ValueError) as exc:
-        raise AdCreatorError("Makaron screen-demo design has invalid dimensions or timing") from exc
-    if width < 720 or height < 1280 or abs(width / height - 9 / 16) > 0.01:
-        raise AdCreatorError("Makaron screen-demo design must be vertical 9:16 and at least 720x1280")
-    if fps != 30 or not 3.5 <= duration <= 4.5:
-        raise AdCreatorError("Makaron screen-demo design must be 30fps and 3.5-4.5 seconds")
 
 
 def validate_timing_manifest(props: dict[str, Any]) -> None:
