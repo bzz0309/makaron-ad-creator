@@ -91,7 +91,35 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
                 errors.append(f"locales must map {ad_locale}->{expected_ui}")
     output = config["output"]
     if int(output.get("width", 0)) != 1080 or int(output.get("height", 0)) != 1920:
-        errors.append("output must be 1080x1920")
+        errors.append("output target must be 1080x1920")
+    minimum_width = int(output.get("minimum_width", 720))
+    minimum_height = int(output.get("minimum_height", 1280))
+    if minimum_width < 720 or minimum_height < 1280:
+        errors.append("output minimum resolution must be at least 720x1280")
+    output["minimum_width"] = minimum_width
+    output["minimum_height"] = minimum_height
+    safe_zone = output.setdefault("safe_zone", {})
+    safe_defaults = {
+        "profile": "meta-reels",
+        "top_px": 250,
+        "bottom_px": 340,
+        "left_px": 90,
+        "right_px": 180,
+        "caption_top_px": 270,
+        "max_characters_per_line": 20,
+    }
+    for key, value in safe_defaults.items():
+        safe_zone.setdefault(key, value)
+    if safe_zone.get("profile") != "meta-reels":
+        errors.append("output.safe_zone.profile must be meta-reels")
+    for key in ("top_px", "bottom_px", "left_px", "right_px", "caption_top_px", "max_characters_per_line"):
+        try:
+            safe_zone[key] = int(safe_zone[key])
+        except (TypeError, ValueError):
+            errors.append(f"output.safe_zone.{key} must be an integer")
+    if all(isinstance(safe_zone.get(key), int) for key in ("top_px", "bottom_px", "caption_top_px")):
+        if safe_zone["caption_top_px"] < safe_zone["top_px"]:
+            errors.append("output.safe_zone.caption_top_px must not enter the top overlay zone")
     maximum_duration = float(output.get("duration_seconds", 0))
     minimum_duration = float(output.get("minimum_duration_seconds", 15.0))
     preferred_duration = float(output.get("preferred_duration_seconds", min(18.0, maximum_duration)))
@@ -210,7 +238,7 @@ def campaign_template(
             "executor": "agent",
             "makaron_binary": "makaron",
             "max_attempts": 3,
-            "builder_skill_id": "",
+            "builder_skill_id": "tiktok-video",
         },
         "assets": {
             "logo_cta": BUNDLED_LOGO_CTA_URI,
@@ -220,6 +248,17 @@ def campaign_template(
         "output": {
             "width": 1080,
             "height": 1920,
+            "minimum_width": 720,
+            "minimum_height": 1280,
+            "safe_zone": {
+                "profile": "meta-reels",
+                "top_px": 250,
+                "bottom_px": 340,
+                "left_px": 90,
+                "right_px": 180,
+                "caption_top_px": 270,
+                "max_characters_per_line": 20,
+            },
             "minimum_duration_seconds": 15.0,
             "preferred_duration_seconds": 18.0,
             "duration_seconds": 20.0,

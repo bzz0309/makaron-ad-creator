@@ -9,7 +9,7 @@ metadata:
     tags: [advertising, automation, localization]
     faceProtection: default
     defaultAspectRatio: "9:16"
-    models: [seedance-fast, kling, grok]
+    models: [seedance-2-0, kling, grok]
 ---
 
 # Makaron Ad Creator
@@ -56,7 +56,7 @@ Return `BLOCKED` before generation when consent/ownership is unclear, a subject 
 
 | Attempt | Model | Action |
 |:--:|---|---|
-| 1 | `seedance-fast` | Primary effect/final generation |
+| 1 | `seedance-2-0` | Primary Seedance 2.0 Hook/effect/final generation; target 1080p, minimum 720p |
 | 2 | `kling` | Retry only the failed node with locked inputs |
 | 3 | `grok` | Final retry only for that failed node |
 
@@ -67,10 +67,10 @@ Three failures, identity/product loss, prompt drift, or unresolved policy risk �
 1. Validate rights, claims, input, locales, output, binaries, and the Skill↔project registry.
 2. Write `plan.json` and initialize resumable `state.json`.
 3. Generate five-line culturally adapted script JSON for only the selected ad locales.
-4. Generate a neutral ordinary Before image, invoke the target Skill for the effect video, extract an After frame, and compose a black-background side-by-side comparison locally.
+4. Generate a neutral ordinary Before image. Invoke the target Skill twice: once for a distinct curiosity Hook and once for the complete effect/result payoff. The Hook and result must not reuse the same shot, action, camera path, or source frames. Extract an After frame from the result and compose a black-background side-by-side comparison locally.
 5. Run `edit-makaron-app-workflow-recording` only for the selected UI locales: English uses `en`, Japanese uses `ja`, and Cantonese uses `zh-Hant`.
 6. Call `makaron music create` once to generate an original instrumental BGM of at least 20 seconds with no early fade-out. Reuse that exact BGM asset for every selected locale.
-7. For each locale, issue one bound-project `makaron chat` request with the comparison image, effect video, locale-correct workflow video, fixed CTA source, BGM, and five script lines. Require the Makaron Agent's internal Remotion workflow to mute every source video (including CTA), create one continuous Seed Audio young-female TTS take, burn one synchronized top-safe subtitle set, loop the same BGM from frame zero through CTA, and directly export the complete five-part MP4. Accept only a newly generated video result, never an uploaded source attachment. If platform materialization is unavailable but the response contains a complete, bounded, QA-passed Remotion design, validate it and render that same design through the bundled local Remotion fallback. Do not use local edge-tts, FFmpeg concat/amix, ASS subtitle rendering, or PIL final composition.
+7. For each locale, invoke the built-in `tiktok-video` builder in one bound-project `makaron chat` request with the distinct Hook, comparison image, effect/result, locale-correct workflow, fixed CTA, BGM, and five script lines. Use Makaron's current Remotion composition runtime to create one continuous Seed Audio young-female TTS take first, derive real Caption JSON timings from that audio, then make scene boundaries contain their assigned spoken lines. Burn one Meta-safe subtitle set, mute every source video, loop the same BGM from frame zero through CTA, and directly export the complete five-part MP4. Accept only a newly generated video result, never an uploaded source attachment. A fallback Remotion design must satisfy composition contract v2 before local rendering. Do not use local edge-tts, FFmpeg concat/amix, ASS subtitle rendering, or PIL final composition.
 8. Run technical QC, then package MP4s, BGM source, scripts, plan, prompts, project binding, review gate, provenance, and performance plan. Publication remains human-approved and paused by default.
 
 ## CLI protocol
@@ -104,6 +104,8 @@ For another Agent, use `--executor agent`. The CLI emits one `run/requests/<node
 makaron-ad complete <campaign.json> --node <node-id> --artifact <file> --response-id <id>
 # For another Agent's BGM node, also retain the generated public audio URL:
 makaron-ad complete <campaign.json> --node bgm --artifact <file> --response-id <id> --source-url <https-url>
+# For final-* nodes, attach the required Caption/scene contract v2 sidecar:
+makaron-ad complete <campaign.json> --node final-en --artifact <file> --response-id <id> --timing-manifest <timing-manifest-en.json>
 makaron-ad run <campaign.json> --executor agent
 ```
 
@@ -113,7 +115,7 @@ Read [executor-protocol.md](references/executor-protocol.md) for request semanti
 
 Use the English templates in `scripts/makaron_ad_creator/prompts.py`. Fill placeholders only. Do not translate, rewrite, reorder, add, or remove template sections before execution. Save every filled prompt under `run/prompts/` and compile them into `deliverables/prompt_used.md`.
 
-The five fixed final beats are: outcome Hook video → simultaneous Before/After comparison image → truthful localized workflow video → full effect/result video → fixed Makaron Logo CTA video. Keep the same order and timing bounds across locales; allow exact beat lengths to adapt to the Skill mechanism and natural speech. TTS defaults to a natural energetic young-adult female Seed Audio voice in the target locale and must finish before CTA. Every source video is muted. CTA source audio is never used. One separately generated instrumental BGM is looped continuously from 0.0 seconds through the final CTA frame at relative mix volume `0.22`, with only a gentle final fade.
+The five fixed final beats are: distinct outcome-teaser Hook video → simultaneous Before/After comparison image → truthful localized workflow video → full effect/result video → fixed Makaron Logo CTA video. Keep the same order and timing bounds across locales; allow exact beat lengths to adapt to measured speech. TTS defaults to a natural energetic young-adult female Seed Audio voice and must finish before CTA. Caption line 1 belongs to Hook, line 2 to comparison, lines 3–4 to workflow, and line 5 to result; no line may cross its scene boundary. Every source video is muted. CTA source audio is never used. One separately generated instrumental BGM is looped continuously from 0.0 seconds through the final CTA frame at relative mix volume `0.22`, with only a gentle final fade. On Meta Reels keep key content inside the central safe zone; captions use white text, black outline, no bar, at most two lines and 20 visible characters per line.
 
 Read [reference-editing-rhythm.md](references/reference-editing-rhythm.md) only when changing timing, duration QC, subtitle placement, or CTA selection.
 
@@ -121,7 +123,7 @@ Read [reference-editing-rhythm.md](references/reference-editing-rhythm.md) only 
 
 | Result | Condition | Action |
 |---|---|---|
-| `PASS` | Every selected 1080×1920 H.264/AAC MP4 is 15–20s; correct five-part order; identity/product stable; correct UI locale; one complete Seed Audio narration; readable single subtitles; the same BGM is audible through CTA; CTA/source audio is muted; provenance complete | Deliver to human review |
+| `PASS` | Every selected 9:16 H.264/AAC MP4 targets 1080×1920 and is never below 720×1280, lasts 15–20s, has distinct Hook/result, correct five-part order and UI locale, scene-bound Seed Audio captions inside Meta safe zones, continuous BGM through CTA, muted source audio, and complete provenance | Deliver to human review |
 | `REROLL` | Recoverable node-level face/hand drift, subtitle collision, timing issue, failed download, or literal localization | Retry only that node with the next model |
 | `BLOCKED` | Rights/claims unclear, prohibited content, project isolation broken, missing required Marketplace data, subject/product lost, prompt drift, or budget exhausted | Stop and report exact node/error |
 

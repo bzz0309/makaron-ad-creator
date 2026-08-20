@@ -115,6 +115,7 @@ class MakaronAdapter:
                 f"Makaron returned no exported final MP4 or reusable Remotion design for {node_id}; "
                 "attached source videos are not final artifacts"
             )
+        validate_ad_remotion_design(design)
         design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
         write_json(design_path, design)
         script = Path(__file__).resolve().parents[1] / "remotion_fallback" / "render.mjs"
@@ -269,6 +270,61 @@ def extract_remotion_design(response: Any) -> dict[str, Any] | None:
             ):
                 return design
     return None
+
+
+def validate_ad_remotion_design(design: dict[str, Any]) -> None:
+    """Reject stale/hand-timed designs that predate the synchronized ad contract."""
+    props = design.get("props")
+    if not isinstance(props, dict):
+        raise AdCreatorError("Remotion design is missing props")
+    validate_timing_manifest(props)
+
+
+def validate_timing_manifest(props: dict[str, Any]) -> None:
+    """Validate the portable caption/scene sidecar used by Makaron and other Agents."""
+    def numeric(value: Any, label: str) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise AdCreatorError(f"Remotion timing manifest has invalid {label}") from exc
+
+    if numeric(props.get("compositionContractVersion", 0), "compositionContractVersion") < 2:
+        raise AdCreatorError("Remotion design is missing compositionContractVersion 2")
+    safe = props.get("safeZone")
+    if not isinstance(safe, dict):
+        raise AdCreatorError("Remotion timing manifest is missing the Meta safeZone")
+    safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
+    for key, minimum in safe_minimums.items():
+        if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
+            raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
+    maximum_characters = numeric(safe.get("maxCharactersPerLine", 0), "safeZone.maxCharactersPerLine")
+    if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 21):
+        raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 20")
+    captions = props.get("captions")
+    if not isinstance(captions, list) or len(captions) != 5:
+        raise AdCreatorError("Remotion design must contain exactly five timed Caption objects")
+    for caption in captions:
+        if not isinstance(caption, dict) or not all(key in caption for key in ("text", "startMs", "endMs", "timestampMs", "confidence")):
+            raise AdCreatorError("Every Remotion caption requires text/startMs/endMs/timestampMs/confidence")
+        if numeric(caption["endMs"], "caption.endMs") <= numeric(caption["startMs"], "caption.startMs"):
+            raise AdCreatorError("Remotion caption timing must have endMs after startMs")
+    scenes = props.get("scenes")
+    required_scenes = ("hook", "comparison", "workflow", "result", "cta")
+    if not isinstance(scenes, dict) or any(scene not in scenes for scene in required_scenes):
+        raise AdCreatorError("Remotion design must contain all five scene timing ranges")
+    for scene in required_scenes:
+        timing = scenes[scene]
+        if not isinstance(timing, dict) or numeric(timing.get("endMs", 0), f"scenes.{scene}.endMs") <= numeric(timing.get("startMs", -1), f"scenes.{scene}.startMs"):
+            raise AdCreatorError(f"Remotion scene {scene} has invalid timing")
+    expected_map = ["hook", "comparison", "workflow", "workflow", "result"]
+    if props.get("lineSceneMap") != expected_map:
+        raise AdCreatorError("Remotion lineSceneMap does not match the locked five-beat contract")
+    for caption, scene_name in zip(captions, expected_map):
+        scene = scenes[scene_name]
+        if numeric(caption["startMs"], "caption.startMs") < numeric(scene["startMs"], f"scenes.{scene_name}.startMs") or numeric(caption["endMs"], "caption.endMs") > numeric(scene["endMs"], f"scenes.{scene_name}.endMs"):
+            raise AdCreatorError(f"Caption crosses its assigned {scene_name} scene boundary")
+    if numeric(captions[-1]["endMs"], "caption.endMs") > numeric(scenes["cta"]["startMs"], "scenes.cta.startMs"):
+        raise AdCreatorError("Voiceover/subtitles must finish before CTA")
 
 
 def extract_json_object(response: Any, required_keys: tuple[str, ...] = ("en", "ja", "yue")) -> dict[str, Any]:

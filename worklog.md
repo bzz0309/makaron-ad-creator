@@ -48,3 +48,12 @@
 - Added one-time persistent CLI login. `makaron-ad login` validates the supplied key and saves it in macOS Keychain; later Agent runs automatically inject it, while `makaron-ad logout` removes it. Credentials remain outside project files, logs, and Git.
 - Completed the rights-cleared Crystal Ballet English integration campaign. The pipeline generated script, Before, target-Skill effect, 21.5-second original BGM, After, comparison, English synthetic workflow, Seed Audio voiceover, synchronized subtitles, and an 18.048-second 1080×1920 H.264/AAC final; technical QC passed, including continuous BGM through the silent-source CTA.
 - Fixed a live final-output bug where generic media URL extraction could select the uploaded 10.1-second CTA after Makaron's Remotion exporter returned `Forbidden`. Final nodes now accept only authoritative generated video fields, preflight dimensions/duration/audio/BGM before PASS, and safely render the returned bounded Remotion design with pinned Remotion 4.0.506 when platform materialization is unavailable.
+
+## 2026-08-20
+
+- Diagnosed the Crystal Ballet English timing defect: the second voiceover line extended beyond the comparison beat because scene cuts and subtitles were independently hand-timed. Replaced the contract with Seed Audio first, measured Remotion Caption JSON second, and scene boundaries derived from the complete assigned lines.
+- Added an independent target-Skill Hook node. Hook and result are now separate artifacts and the final composition forbids repeated shots, actions, camera paths, or retimed source frames between them.
+- Changed video routing to Makaron's canonical `seedance-2-0 → kling → grok`; Seedance 2.0 is used unless the current node fails.
+- Kept 1080×1920 as the delivery target while accepting Meta's official 720px Reels minimum as a 720×1280 9:16 fallback floor.
+- Defaulted final composition to Makaron's built-in `tiktok-video` Remotion builder and added composition contract v2 validation for five Caption objects, five scene timing ranges, and the fixed line-to-scene mapping before any local fallback render.
+- Added the Meta Reels safe-zone profile: top 250px, bottom 340px, left 90px, right 180px, captions at y=270 or lower. Subtitles are one white/black-outline track, no bar, maximum two lines and 20 visible characters per line. The old 140px top offset is explicitly excluded from Meta output.

@@ -43,7 +43,11 @@ makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 
 这一条命令会自动：查找 Skill 元数据和 ID、首次创建或后续复用该 Skill 的专属 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。
 
-每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但节奏会根据 Skill 动作复杂度在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，让 Agent 内部 Remotion 一次完成全部素材静音、Seed Audio 年轻女声旁白、同步字幕、同一 BGM 从头循环到 CTA 结束，以及完整 MP4 导出。CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。如果 Makaron 已生成且视觉 QA 通过的 Remotion design 因平台 `Forbidden` 无法 materialize，CLI 会安全校验并用固定版本 Remotion 在本机渲染同一份 design；不会重新做 TTS、字幕或音频混合，也不会误把上传的 CTA/素材附件当成最终视频。
+每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但 Hook 与效果段会分别调用目标 Skill 生成，禁止复用同一镜头、动作或素材帧。节奏会在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。视频模型优先 Seedance 2.0，失败才依次回退；输出目标为 1080×1920，最低接受 720×1280。
+
+CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、最多两行、每行最多 20 个可见字符。Meta Reels 默认预留顶部 250px、底部 340px、左侧 90px、右侧 180px，字幕从 y=270 起；旧的距顶 140px 不用于 Meta，因为会被平台 UI 遮挡。
+
+CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。如果 Makaron 已生成的 Remotion design 因平台 `Forbidden` 无法 materialize，CLI 只会接受满足同步字幕/场景边界 contract v2 的 design，再用固定版本 Remotion 在本机渲染同一份 design；不会误把上传的 CTA/素材附件当成最终视频。
 
 随 npm 包内置完整 Makaron Logo 动画源片，Campaign 使用可跨电脑解析的 `bundled://makaron-logo-cta.mp4`，所以其他 Agent 在新电脑执行一次 `setup` 后也会拥有同一份 CTA 资源，不依赖这台电脑的 Desktop 路径。Remotion 最终节点读取固定 CTA 源片的配置片段，不让模型重画 Logo。
 
@@ -63,7 +67,7 @@ makaron-ad doctor
 
 - Final ad locales can be any selected subset of English, Japanese, and Hong Kong Cantonese; the default remains all three.
 - App UI mapping is fixed: English uses English, Japanese uses Japanese, and Cantonese uses Traditional Chinese.
-- Final structure is fixed to Hook video → comparison image → workflow video → effect/result video → bundled Logo CTA; one project-bound Makaron chat drives internal Remotion for Seed Audio TTS, synchronized subtitles, CTA placement, and the final mix.
+- Final structure is fixed to a separately generated Hook video → comparison image → workflow video → separately generated effect/result video → bundled Logo CTA; one project-bound Makaron chat drives the built-in `tiktok-video` Remotion runtime for measured Seed Audio captions, Meta-safe placement, CTA, and the final mix.
 - Final duration adapts from 15–20 seconds; the shared timing bounds were calibrated from supplied English, Japanese, and Cantonese finished ads rather than forcing every Skill to 18 seconds.
 - The complete 10-second Logo CTA source is bundled for portability; Remotion uses only the configured continuous 2–3 second excerpt, mutes its source audio, and keeps the campaign BGM playing through it.
 - One instrumental BGM is generated per campaign with `makaron music create`, reused for every selected locale, and mixed at relative volume `0.22` from frame zero through the final CTA frame.
@@ -82,7 +86,7 @@ init                           write campaign.json and plan.json
 plan <campaign.json>           inspect deterministic DAG
 run <campaign.json>            execute or resume
 status <campaign.json>         inspect state and lineage
-complete ...                   attach another Agent's generated artifact
+complete ...                   attach another Agent's artifact; final-* also requires the Remotion timing-manifest JSON
 fail ...                       report a failed Agent request and use the next retry
 retry --node <id>              reset one node and downstream dependents
 ```

@@ -48,14 +48,24 @@ Keep the same person or product recognizable and factual. Do not humiliate, body
 Return one image only."""
 
 
-def effect_prompt(config: dict[str, Any], model_preference: str = "seedance-fast") -> str:
+def hook_prompt(config: dict[str, Any], model_preference: str = "seedance-2-0") -> str:
+    constraints = "; ".join(config.get("style_constraints", [])) or "preserve identity and product facts"
+    return f"""Use the attached owned input image with the selected Makaron Skill.
+Create one 5-second vertical HOOK video inspired by this supported transformation: {config['target_skill']['core']}.
+MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}. Use Seedance 2.0 first; use a fallback model only if this attempt fails.
+STYLE CONSTRAINTS: {constraints}
+This is a curiosity-opening teaser, not the full result. Use a distinct opening action, framing, camera move, or intermediate transformation moment that can lead into the ad. Do not show the same complete payoff, shot, action, camera path, or source frames that the separate effect/result clip will use. Preserve identity and factual product geometry. No text, logo, UI, watermark, unsupported claim, morphing, or source audio. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280.
+Return one MP4 only."""
+
+
+def effect_prompt(config: dict[str, Any], model_preference: str = "seedance-2-0") -> str:
     constraints = "; ".join(config.get("style_constraints", [])) or "preserve identity and product facts"
     return f"""Use the attached owned input image with the selected Makaron Skill.
 Create one 5-second vertical result video that demonstrates only this supported transformation: {config['target_skill']['core']}.
-MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}
+MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}. Use Seedance 2.0 first; use a fallback model only if this attempt fails.
 STYLE CONSTRAINTS: {constraints}
 For an authorized, clearly adult fashion subject only, and only when compatible with the source image and target Skill, use elegant glamorous styling such as an open neckline or exposed shoulders and a coordinated midriff silhouette; a fuller shot may show the legs. Keep it non-explicit and non-vulgar. Never apply this direction to minors, age-ambiguous people, products, nonhuman subjects, or unrelated transformations.
-Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. Use one readable action and restrained camera motion. No text, logo, UI, watermark, fake endorsement, unsupported claim, morphing, or extra objects. Exact aspect ratio 9:16. No source audio.
+Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. Show the complete transformation payoff once. Make this clip visibly different from the separately generated Hook: no repeated shot, action, camera path, or recycled source frames. Use one readable action and restrained camera motion. No text, logo, UI, watermark, fake endorsement, unsupported claim, morphing, or extra objects. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280. No source audio.
 Return one MP4 only."""
 
 
@@ -68,7 +78,7 @@ MUSIC DIRECTION: {audio['bgm_prompt']}
 The track must be at least 20 seconds and instrumental only: no vocals, speech, chants, recognizable copyrighted melody, or abrupt ending. Start with an immediate hook, maintain useful edit rhythm, stay at full musical energy through the required duration with no early fade-out, and remain loop-friendly for a 15-20 second ad. Return one audio track only."""
 
 
-def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[str]], model_preference: str = "seedance-fast") -> str:
+def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[str]], model_preference: str = "seedance-2-0") -> str:
     output = config["output"]
     offer = config["offer"]
     lines = scripts[locale]
@@ -78,17 +88,23 @@ def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[st
     final_preferred = float(output["preferred_duration_seconds"])
     final_max = float(output["duration_seconds"])
     bgm_volume = float(config["audio"]["bgm_volume"])
+    safe = output["safe_zone"]
     return f"""Use the Makaron Agent's internal Remotion workflow to create and export one finished vertical social ad from the attached owned/licensed assets in this single project-bound chat run.
 TARGET LOCALE: {locale}
 MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}
 LOCALIZATION RULE: {LOCALE_RULES[locale]}
 VOICEOVER SCRIPT: {json.dumps(lines, ensure_ascii=False)}
 Generate one continuous Seed Audio voiceover and read exactly those five lines, once, in order, using this target-locale voice profile: {tts_voice}. Do not read Skill descriptions, UI text, filenames, or production instructions. Complete every line before the Logo CTA begins; the CTA has no voiceover. The final spoken word must not be truncated.
-ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the target-Skill effect/result; video 2 is the locale-correct Makaron workflow; video 3 is the fixed Makaron Logo CTA source; audio 1 is the separately generated instrumental BGM.
+ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the distinct target-Skill Hook; video 2 is the full target-Skill effect/result; video 3 is the locale-correct Makaron workflow; video 4 is the fixed Makaron Logo CTA source; audio 1 is the separately generated instrumental BGM.
 LOCKED FINAL ORDER: Hook video; comparison image; localized workflow video; effect/result video; fixed Logo CTA video. Use adaptive timing within these bounds: Hook 2.5-5.0s; comparison exactly 2.5s; workflow 3.5-4.5s; effect/result at least 3.0s; Logo CTA exactly {cta_seconds:.1f}s using the source from {float(config['assets']['logo_cta_start_seconds']):.1f}s. Use the 5-second Hook only when the Skill's physical action or transformation mechanism would be unclear in 2.5 seconds; otherwise keep the Hook at 2.5 seconds. Extend the result segment only long enough to show one complete payoff without repetition.
-Mute the original audio from every attached video, including the effect video, workflow video, and Logo CTA. Loop audio 1 as the same continuous BGM from 0.0 seconds through the final frame, including throughout the Logo CTA, at relative mix volume {bgm_volume:.2f} under the voiceover. Do not switch tracks, restart with different music, use CTA source audio, add sound effects, or allow a silent tail. Apply a gentle music fade only at the very end of the complete ad.
-Burn exactly one synchronized subtitle set for every spoken line: top-aligned 140px from the top, white text with black stroke/outline, no background bar, maximum two lines. English subtitles are uppercase; Japanese and Cantonese retain natural case. Do not add duplicate title-card subtitles.
+Use video 1 only for the Hook and video 2 only for the result. Never reuse, loop, reverse, freeze, or speed-ramp the same source frames across those two sections. If they are semantically too similar, fail this composition so the Hook node can be rerolled.
+Mute the original audio from every attached video, including the Hook, effect video, workflow video, and Logo CTA. Loop audio 1 as the same continuous BGM from 0.0 seconds through the final frame, including throughout the Logo CTA, at relative mix volume {bgm_volume:.2f} under the voiceover. Do not switch tracks, restart with different music, use CTA source audio, add sound effects, or allow a silent tail. Apply a gentle music fade only at the very end of the complete ad.
+REMOTION TIMING CONTRACT: create the Seed Audio narration first, obtain real word/line timings, and represent the five lines as Caption JSON objects with text, startMs, endMs, timestampMs, and confidence. Derive scene boundaries from those measured timings; never guess subtitle frames independently from the audio. Line 1 must start and end inside Hook, line 2 entirely inside comparison, lines 3 and 4 entirely inside workflow, and line 5 entirely inside effect/result. No voice or subtitle may cross a scene boundary or enter CTA. Keep each caption start/end within 150ms of its spoken audio. Return the timing manifest with scene startMs/endMs and every caption's assigned scene in the QC summary.
+If the runtime returns an editable Remotion design, its props must include compositionContractVersion: 2, captions: Caption[], scenes with startMs/endMs for hook/comparison/workflow/result/cta, lineSceneMap: ["hook", "comparison", "workflow", "workflow", "result"], and safeZone with the exact Meta inset values below.
+META SAFE ZONE: on the {output['width']}x{output['height']} canvas keep every subtitle, Logo/CTA text, face, and key information inside x={safe['left_px']}..{output['width'] - safe['right_px']} and y={safe['top_px']}..{output['height'] - safe['bottom_px']}. The Meta profile overrides the older 140px top-caption convention because 140px lies under account UI. Place the subtitle block at y={safe['caption_top_px']} or lower and away from the right-side action rail.
+Serialize that profile in props.safeZone as topPx={safe['top_px']}, bottomPx={safe['bottom_px']}, leftPx={safe['left_px']}, rightPx={safe['right_px']}, captionTopPx={safe['caption_top_px']}, maxCharactersPerLine={safe['max_characters_per_line']}.
+Burn exactly one synchronized subtitle set for every spoken line: white text with black stroke/outline, no black box or background bar, maximum two lines, and at most {safe['max_characters_per_line']} visible characters per line with automatic wrapping that never leaves the safe zone. English subtitles are uppercase; Japanese and Cantonese retain natural case. Do not add duplicate subtitles, title-card captions, or overlapping text layers. Measure text width before rendering and reduce font size or wrap when necessary.
 Return a {final_min:.1f}-{final_max:.1f} second five-part final video, aiming for {final_preferred:.1f} seconds but choosing the shortest duration that keeps the mechanism and spoken lines clear. Build, time-align, subtitle, mix, and export the complete video through Remotion inside this one chat run; do not ask the CLI to perform local FFmpeg concat, amix, ASS subtitle rendering, edge-tts, or PIL final composition. Publishing an editable draft, design, snapshot, contact sheet, source file, or QC note is not completion. The response must contain a newly exported final MP4 in its generated video outputs/result.videos. If materialization reports a stale timeline pointer or Forbidden error, repair the published snapshot/design path and retry export inside this run; never return one of the attached source videos as the final result.
 SUPPORTED OFFER: {offer['value_proposition']}
-Do not invent prices, ratings, endorsements, urgency, or capabilities. No black frames. Exact {output['width']}x{output['height']}, 30fps, H.264/AAC, within {final_min:.1f}-{final_max:.1f} seconds.
+Do not invent prices, ratings, endorsements, urgency, or capabilities. No black frames. Target {output['width']}x{output['height']}, minimum {output['minimum_width']}x{output['minimum_height']}, 9:16, 30fps, H.264/AAC, within {final_min:.1f}-{final_max:.1f} seconds.
 Return the final MP4 and a concise QC summary."""

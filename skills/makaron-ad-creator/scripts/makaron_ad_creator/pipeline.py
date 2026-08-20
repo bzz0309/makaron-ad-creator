@@ -6,14 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design
-from .media import bgm_similarity_in_cta, compose_comparison, extract_after_frame, probe_audio, probe_video
-from .prompts import before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
+from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
+from .media import bgm_similarity_in_cta, compose_comparison, extract_after_frame, is_vertical_resolution_acceptable, probe_audio, probe_video
+from .prompts import before_prompt, bgm_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt
 from .schema import LOCALE_TO_UI, ad_locales, ui_locales, validate_config
 from .util import AdCreatorError, json_candidates, read_json, run, sha256, write_json
 
 
-MODELS = ["seedance-fast", "kling", "grok"]
+MODELS = ["seedance-2-0", "kling", "grok"]
 
 
 def now() -> str:
@@ -25,6 +25,7 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "validate", "kind": "local", "depends_on": []},
         {"id": "scripts", "kind": "generate_json", "depends_on": ["validate"]},
         {"id": "before", "kind": "generate_image", "depends_on": ["validate"]},
+        {"id": "hook", "kind": "generate_video", "depends_on": ["validate"]},
         {"id": "effect", "kind": "generate_video", "depends_on": ["validate"]},
         {"id": "bgm", "kind": "generate_audio", "depends_on": ["validate"]},
         {"id": "after", "kind": "local", "depends_on": ["effect"]},
@@ -36,7 +37,7 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         nodes.append({
             "id": f"final-{locale}",
             "kind": "generate_video",
-            "depends_on": ["scripts", "comparison", "effect", "workflow", "bgm"],
+            "depends_on": ["scripts", "comparison", "hook", "effect", "workflow", "bgm"],
         })
     nodes += [
         {"id": "qc", "kind": "local", "depends_on": [f"final-{locale}" for locale in selected_locales]},
@@ -164,6 +165,8 @@ class Pipeline:
             self._generate_scripts()
         elif node_id == "before":
             self._generate_before()
+        elif node_id == "hook":
+            self._generate_hook(attempt)
         elif node_id == "effect":
             self._generate_effect(attempt)
         elif node_id == "bgm":
@@ -243,7 +246,24 @@ class Pipeline:
             images=[Path(self.config["input_image"])],
             destination=output,
         )
-        self.add_artifact("effect", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)])
+        info = probe_video(output)
+        if not is_vertical_resolution_acceptable(info, self.config["output"]):
+            raise AdCreatorError("Effect video must be vertical 9:16 and at least 720x1280")
+        self.add_artifact("effect", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
+
+    def _generate_hook(self, attempt: int) -> None:
+        output = self.run_dir / "assets" / "hook.mp4"
+        result = self._adapter().chat(
+            node_id="hook",
+            prompt=hook_prompt(self.config, MODELS[min(attempt - 1, len(MODELS) - 1)]),
+            skill_id=self.config["target_skill"]["id"],
+            images=[Path(self.config["input_image"])],
+            destination=output,
+        )
+        info = probe_video(output)
+        if not is_vertical_resolution_acceptable(info, self.config["output"]):
+            raise AdCreatorError("Hook video must be vertical 9:16 and at least 720x1280")
+        self.add_artifact("hook", output, response_id=result.get("response_id"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
 
     def _generate_bgm(self) -> None:
         output = self.run_dir / "assets" / "bgm.mp3"
@@ -309,6 +329,7 @@ class Pipeline:
         scripts = read_json(self.artifact("scripts"))
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
         videos = [
+            self.artifact("hook", ".mp4"),
             self.artifact("effect", ".mp4"),
             self._workflow_for(locale),
             Path(self.config["assets"]["logo_cta"]),
@@ -317,12 +338,21 @@ class Pipeline:
         adapter = self._adapter()
         cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
         cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
-        if attempt == 1 and cached_response and extract_remotion_design(cached_response):
+        cached_design = extract_remotion_design(cached_response) if cached_response else None
+        cached_contract_valid = False
+        if attempt == 1 and cached_design:
+            try:
+                validate_ad_remotion_design(cached_design)
+                cached_contract_valid = True
+            except AdCreatorError:
+                cached_contract_valid = False
+        if cached_contract_valid:
             fallback = adapter.render_remotion_fallback(node_id, cached_response, output)
             result = {
                 "response_id": cached_response.get("response_id"),
                 "render_fallback": fallback,
             }
+            final_design = cached_design
         else:
             result = adapter.chat(
                 node_id=node_id,
@@ -334,6 +364,12 @@ class Pipeline:
                 destination=output,
                 require_generated_video=True,
             )
+            final_design = extract_remotion_design(result.get("response"))
+            if not final_design:
+                raise AdCreatorError("Final Remotion output is missing the required caption/scene timing contract")
+            validate_ad_remotion_design(final_design)
+        timing_manifest = self.run_dir / "final" / f"timing-manifest-{locale}.json"
+        write_json(timing_manifest, final_design["props"])
         info = probe_video(output)
         expected = self.config["output"]
         similarity = bgm_similarity_in_cta(
@@ -342,7 +378,7 @@ class Pipeline:
             float(self.config["assets"]["logo_cta_excerpt_seconds"]),
         )
         final_checks = {
-            "dimensions": info["width"] == expected["width"] and info["height"] == expected["height"],
+            "dimensions": is_vertical_resolution_acceptable(info, expected),
             "codec": info["codec"] == "h264",
             "duration": (
                 float(expected["minimum_duration_seconds"]) - 0.1
@@ -366,6 +402,8 @@ class Pipeline:
             continuous_bgm_sha256=sha256(self.artifact("bgm")),
             composition_engine="makaron-agent-remotion",
             tts_engine="seed-audio",
+            timing_manifest=str(timing_manifest.resolve()),
+            composition_contract_version=2,
             render_fallback=result.get("render_fallback"),
         )
 
@@ -386,6 +424,15 @@ class Pipeline:
         }
         for locale in ad_locales(self.config):
             final_path = self.artifact(f"final-{locale}", ".mp4")
+            final_item = self.state["nodes"][f"final-{locale}"]["artifacts"][0]
+            timing_manifest_path = Path(str(final_item.get("timing_manifest", "")))
+            timing_contract_valid = False
+            if timing_manifest_path.is_file():
+                try:
+                    validate_timing_manifest(read_json(timing_manifest_path))
+                    timing_contract_valid = True
+                except AdCreatorError:
+                    timing_contract_valid = False
             info = probe_video(final_path)
             bgm_similarity = bgm_similarity_in_cta(
                 final_path,
@@ -393,7 +440,7 @@ class Pipeline:
                 float(self.config["assets"]["logo_cta_excerpt_seconds"]),
             )
             checks = {
-                "dimensions": info["width"] == expected["width"] and info["height"] == expected["height"],
+                "dimensions": is_vertical_resolution_acceptable(info, expected),
                 "codec": info["codec"] == "h264",
                 "duration": (
                     float(expected["minimum_duration_seconds"]) - 0.1
@@ -402,6 +449,7 @@ class Pipeline:
                 ),
                 "audio": info["has_audio"],
                 "continuous_bgm_through_cta": bgm_similarity >= 0.55,
+                "scene_bound_caption_contract": timing_contract_valid,
                 "size": info["bytes"] <= 50 * 1024 * 1024,
             }
             info["bgm_cta_similarity"] = bgm_similarity
@@ -424,7 +472,11 @@ class Pipeline:
             source = self.artifact(f"final-{locale}", ".mp4")
             target = delivery / source.name
             shutil.copy2(source, target)
-            delivered.append({"locale": locale, "path": str(target.resolve()), "sha256": sha256(target)})
+            final_item = self.state["nodes"][f"final-{locale}"]["artifacts"][0]
+            timing_source = Path(final_item["timing_manifest"])
+            timing_target = delivery / f"timing-manifest-{locale}.json"
+            shutil.copy2(timing_source, timing_target)
+            delivered.append({"locale": locale, "path": str(target.resolve()), "sha256": sha256(target), "timing_manifest": str(timing_target.resolve())})
         bgm_source = self.artifact("bgm")
         bgm_target = delivery / ("bgm-source" + bgm_source.suffix.lower())
         shutil.copy2(bgm_source, bgm_target)
@@ -509,8 +561,10 @@ class Pipeline:
             request.update({"operation": "generate_json", "prompt": script_prompt(self.config), "expected": "scripts.json"})
         elif node_id == "before":
             request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [self.config["input_image"]], "expected": "before.png"})
+        elif node_id == "hook":
+            request.update({"operation": "invoke_skill_video", "prompt": hook_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "hook.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "effect":
-            request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4"})
+            request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "bgm":
             request.update({
                 "operation": "generate_instrumental_bgm",
@@ -524,7 +578,7 @@ class Pipeline:
         elif node_id.startswith("final-"):
             locale = node_id.split("-", 1)[1]
             scripts = read_json(self.artifact("scripts"))
-            videos = [str(self.artifact("effect", ".mp4")), str(self._workflow_for(locale))]
+            videos = [str(self.artifact("hook", ".mp4")), str(self.artifact("effect", ".mp4")), str(self._workflow_for(locale))]
             request.update({
                 "operation": "assemble_localized_ad",
                 "locale": locale,
@@ -534,14 +588,22 @@ class Pipeline:
                 "audios": [self._bgm_input()],
                 "input_roles": {
                     "images": ["before_after_comparison"],
-                    "videos": ["effect_result", "localized_workflow", "fixed_logo_cta"],
+                    "videos": ["distinct_hook", "effect_result", "localized_workflow", "fixed_logo_cta"],
                     "audios": ["campaign_bgm"],
                 },
                 "composition": {
                     "engine": "makaron-agent-remotion",
+                    "builder_skill_id": self.config.get("automation", {}).get("builder_skill_id", "tiktok-video"),
                     "one_project_bound_chat": True,
                     "tts_engine": "seed-audio",
+                    "caption_format": "remotion-caption-json",
+                    "caption_fields": ["text", "startMs", "endMs", "timestampMs", "confidence"],
+                    "scene_bound_caption_timing": True,
+                    "maximum_caption_audio_drift_ms": 150,
                     "subtitles_burned_in": True,
+                    "subtitle_style": {"color": "white", "stroke": "black", "background": "none", "max_lines": 2, "max_characters_per_line": 20},
+                    "safe_zone": self.config["output"]["safe_zone"],
+                    "hook_and_result_must_be_distinct": True,
                     "all_source_video_audio_muted": True,
                     "cta_source_audio_muted": True,
                     "bgm_volume": self.config["audio"]["bgm_volume"],
@@ -549,6 +611,7 @@ class Pipeline:
                     "local_ffmpeg_audio_or_subtitle_postprocess": False,
                 },
                 "expected": f"final-artifact-{locale}.mp4",
+                "expected_timing_manifest": f"timing-manifest-{locale}.json",
             })
         else:
             raise AdCreatorError(f"Agent request is not supported for {node_id}")
@@ -566,6 +629,7 @@ class Pipeline:
         artifact: Path,
         response_id: str | None = None,
         source_url: str | None = None,
+        timing_manifest: Path | None = None,
     ) -> None:
         if node_id not in self.state["nodes"]:
             raise AdCreatorError(f"Unknown node: {node_id}")
@@ -578,9 +642,16 @@ class Pipeline:
         if node_id == "scripts":
             scripts = read_json(artifact)
             self._validate_scripts(scripts)
-        elif node_id == "effect" or node_id.startswith("final-"):
+        elif node_id in {"hook", "effect"} or node_id.startswith("final-"):
             if artifact.suffix.lower() != ".mp4":
                 raise AdCreatorError(f"{node_id} requires an MP4 artifact")
+            if node_id.startswith("final-"):
+                if not timing_manifest:
+                    raise AdCreatorError(f"{node_id} requires a Remotion timing manifest sidecar")
+                timing_manifest = timing_manifest.resolve()
+                if not timing_manifest.is_file():
+                    raise AdCreatorError(f"Timing manifest not found: {timing_manifest}")
+                validate_timing_manifest(read_json(timing_manifest))
         elif node_id == "bgm":
             if artifact.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac"}:
                 raise AdCreatorError("bgm requires an MP3/WAV/M4A/AAC artifact")
@@ -591,6 +662,8 @@ class Pipeline:
             destination = self.run_dir / "scripts.json"
         elif node_id == "before":
             destination = self.run_dir / "assets" / ("before" + artifact.suffix.lower())
+        elif node_id == "hook":
+            destination = self.run_dir / "assets" / "hook.mp4"
         elif node_id == "effect":
             destination = self.run_dir / "assets" / "effect.mp4"
         elif node_id == "bgm":
@@ -604,6 +677,14 @@ class Pipeline:
         if artifact != destination.resolve():
             shutil.copy2(artifact, destination)
         metadata: dict[str, Any] = {"response_id": response_id}
+        if node_id.startswith("final-") and timing_manifest:
+            locale = node_id.split("-", 1)[1]
+            manifest_destination = self.run_dir / "final" / f"timing-manifest-{locale}.json"
+            manifest_destination.parent.mkdir(parents=True, exist_ok=True)
+            if timing_manifest != manifest_destination.resolve():
+                shutil.copy2(timing_manifest, manifest_destination)
+            metadata["timing_manifest"] = str(manifest_destination.resolve())
+            metadata["composition_contract_version"] = 2
         if node_id == "bgm" and source_url:
             if not source_url.startswith(("https://", "http://")):
                 raise AdCreatorError("bgm source_url must use HTTP or HTTPS")

@@ -14,7 +14,7 @@ A single large Skill can describe the workflow, but it cannot reliably retain no
 
 The CLI writes a visible DAG and state file, executes local nodes, and either calls Makaron directly or pauses on a machine-readable request for another Agent. The same campaign can therefore move between agents without re-planning or losing provenance.
 
-The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. A dedicated `bgm` DAG node calls `makaron music create` once and reuses that audio across locales. Each final node sends the comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat`; the Agent's internal Remotion workflow mutes all source video audio, generates Seed Audio TTS, burns synchronized subtitles, loops the BGM through CTA, and directly exports the complete MP4. Only authoritative generated video outputs can satisfy the node. If Makaron's export endpoint rejects an otherwise complete design, the CLI validates the returned code contract and uses its pinned Remotion renderer to export the identical design locally. Local FFmpeg remains a probe/compression dependency, not the final concat/amix/subtitle engine.
+The npm package also owns the fixed Makaron Logo CTA source. Campaign configs resolve it to the installed package path, so remote Agents never depend on the original contributor's Desktop path. Separate target-Skill nodes generate a distinct Hook and full result, preferring Seedance 2.0. A dedicated `bgm` node calls `makaron music create` once and reuses that audio across locales. Each final node sends Hook, comparison, effect, localized workflow, fixed CTA, BGM, and script to one project-bound `makaron chat` using built-in `tiktok-video`. The Remotion runtime creates Seed Audio first, derives Caption JSON/scene boundaries from measured timing, applies the Meta safe-zone profile, mutes all source audio, loops BGM through CTA, and exports the MP4. Only authoritative generated video outputs plus a valid contract-v2 timing manifest can satisfy the node. If Makaron's export endpoint rejects an otherwise complete design, the CLI validates that same contract before pinned local Remotion rendering. Local FFmpeg remains a probe dependency, not the final concat/amix/subtitle engine.
 
 ```text
 master Skill
@@ -23,7 +23,7 @@ global makaron-ad Node launcher
     ↓ portable runtime + bundled dependencies
 Python orchestration core
     ├── local: validate / After frame / comparison / synthetic UI / QC / package
-    ├── Makaron: script / Before / target-Skill effect / localized final
+    ├── Makaron: script / Before / distinct target-Skill Hook + result / localized final
     └── Agent protocol: request.json → artifact → complete → resume
 ```
 
@@ -38,5 +38,5 @@ Rights/consent, claim truth, initial persistent project binding, and publication
 - Retain recording mode only for explicitly supplied genuine footage.
 - Replace the old hard-coded project and `--project auto` instructions.
 - Replace per-asset approval loops with node QC and retry budget.
-- Normalize output to 1080×1920 instead of the conflicting 886×1920 legacy builder value.
+- Target 1080×1920 instead of the conflicting 886×1920 legacy builder value; accept Meta's official 720×1280 minimum only as a 9:16 fallback.
 - Treat old "uglify" language as unsafe; the Before is ordinary/unpolished, never degrading.

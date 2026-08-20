@@ -12,6 +12,7 @@ from makaron_ad_creator.adapter import (
     extract_generated_video_urls,
     extract_json_object,
     extract_remotion_design,
+    validate_ad_remotion_design,
 )
 from makaron_ad_creator.util import AdCreatorError
 
@@ -40,6 +41,30 @@ class AdapterTests(unittest.TestCase):
             "animation": {"fps": 30, "durationInSeconds": 18},
         }
         self.assertEqual(extract_remotion_design({"result": {"designs": [design]}}), design)
+
+    def test_remotion_contract_rejects_caption_crossing_scene_boundary(self) -> None:
+        scenes = {
+            "hook": {"startMs": 0, "endMs": 2500},
+            "comparison": {"startMs": 2500, "endMs": 5000},
+            "workflow": {"startMs": 5000, "endMs": 9000},
+            "result": {"startMs": 9000, "endMs": 15000},
+            "cta": {"startMs": 15000, "endMs": 18000},
+        }
+        captions = [
+            {"text": str(index), "startMs": start, "endMs": end, "timestampMs": start, "confidence": 1}
+            for index, (start, end) in enumerate(((100, 2000), (3900, 6100), (5100, 6500), (6600, 8500), (9200, 14000)))
+        ]
+        design = {
+            "props": {
+                "compositionContractVersion": 2,
+                "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 270, "maxCharactersPerLine": 20},
+                "captions": captions,
+                "scenes": scenes,
+                "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
+            }
+        }
+        with self.assertRaisesRegex(AdCreatorError, "crosses.*comparison"):
+            validate_ad_remotion_design(design)
 
     def test_final_chat_rejects_source_video_when_export_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

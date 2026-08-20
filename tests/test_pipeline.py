@@ -9,10 +9,10 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from makaron_ad_creator.media import compose_comparison
+from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, plan_for
-from makaron_ad_creator.prompts import bgm_prompt, final_prompt
+from makaron_ad_creator.prompts import bgm_prompt, final_prompt, hook_prompt
 from makaron_ad_creator.schema import DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -42,6 +42,28 @@ class PipelineTests(unittest.TestCase):
         path = campaign_dir / "campaign.json"
         write_json(path, config)
         write_json(campaign_dir / "plan.json", {"version": 1, "nodes": plan_for(config)})
+        return path
+
+    def make_timing_manifest(self) -> Path:
+        path = self.root / "timing-manifest.json"
+        scenes = {
+            "hook": {"startMs": 0, "endMs": 2500},
+            "comparison": {"startMs": 2500, "endMs": 5000},
+            "workflow": {"startMs": 5000, "endMs": 9000},
+            "result": {"startMs": 9000, "endMs": 15000},
+            "cta": {"startMs": 15000, "endMs": 18000},
+        }
+        captions = [
+            {"text": str(index), "startMs": start, "endMs": end, "timestampMs": start, "confidence": 1}
+            for index, (start, end) in enumerate(((100, 2000), (2700, 4700), (5100, 6500), (6600, 8500), (9200, 14000)))
+        ]
+        write_json(path, {
+            "compositionContractVersion": 2,
+            "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 270, "maxCharactersPerLine": 20},
+            "captions": captions,
+            "scenes": scenes,
+            "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
+        })
         return path
 
     def test_schema_rejects_auto_project(self) -> None:
@@ -100,6 +122,11 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["output"]["minimum_duration_seconds"], 15.0)
         self.assertEqual(config["output"]["preferred_duration_seconds"], 18.0)
         self.assertEqual(config["output"]["duration_seconds"], 20.0)
+        self.assertEqual(config["output"]["minimum_width"], 720)
+        self.assertEqual(config["output"]["minimum_height"], 1280)
+        self.assertEqual(config["output"]["safe_zone"]["top_px"], 250)
+        self.assertEqual(config["output"]["safe_zone"]["bottom_px"], 340)
+        self.assertEqual(config["automation"]["builder_skill_id"], "tiktok-video")
 
     def test_final_prompt_locks_body_and_young_female_tts(self) -> None:
         path = self.make_campaign()
@@ -119,9 +146,19 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("internal Remotion workflow", prompt)
         self.assertIn("Seed Audio voiceover", prompt)
         self.assertIn("Loop audio 1 as the same continuous BGM", prompt)
-        self.assertIn("including the effect video, workflow video, and Logo CTA", prompt)
-        self.assertIn("top-aligned 140px", prompt)
+        self.assertIn("including the Hook, effect video, workflow video, and Logo CTA", prompt)
+        self.assertIn("Caption JSON objects", prompt)
+        self.assertIn("within 150ms", prompt)
+        self.assertIn("older 140px", prompt)
+        self.assertIn("y=270", prompt)
+        self.assertIn("at most 20 visible characters", prompt)
+        self.assertIn("video 1 is the distinct target-Skill Hook", prompt)
+        self.assertIn("minimum 720x1280", prompt)
         self.assertIn("do not ask the CLI to perform local FFmpeg", prompt)
+        hook = hook_prompt(config)
+        self.assertIn("seedance-2-0", hook)
+        self.assertIn("never below 720x1280", hook)
+        self.assertIn("not the full result", hook)
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
@@ -133,10 +170,20 @@ class PipelineTests(unittest.TestCase):
         pipeline.save()
         rendered = self.root / "remotion-final.mp4"
         rendered.write_bytes(b"remotion final with seed audio subtitles bgm and cta")
-        pipeline.complete_agent_node("final-en", rendered, "response-final")
+        pipeline.complete_agent_node("final-en", rendered, "response-final", timing_manifest=self.make_timing_manifest())
         final = pipeline.artifact("final-en", ".mp4")
         self.assertEqual(final.name, "final-artifact-en.mp4")
         self.assertEqual(final.read_bytes(), b"remotion final with seed audio subtitles bgm and cta")
+
+    def test_agent_final_requires_timing_manifest(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        pipeline.state["nodes"]["final-en"]["status"] = "WAITING_FOR_AGENT"
+        pipeline.save()
+        rendered = self.root / "missing-manifest.mp4"
+        rendered.write_bytes(b"video")
+        with self.assertRaisesRegex(AdCreatorError, "timing manifest"):
+            pipeline.complete_agent_node("final-en", rendered)
 
     def test_final_agent_request_drives_remotion_with_cta_and_bgm_url(self) -> None:
         path = self.make_campaign()
@@ -148,11 +195,13 @@ class PipelineTests(unittest.TestCase):
         scripts = self.root / "scripts.json"
         write_json(scripts, {"en": [f"line {index}" for index in range(5)]})
         comparison = self.root / "comparison.png"
+        hook = self.root / "hook.mp4"
         effect = self.root / "effect.mp4"
         bgm = self.root / "bgm.mp3"
         workflow = self.root / "workflow.json"
         workflow_en = self.root / "workflow-en.mp4"
         comparison.write_bytes(b"comparison")
+        hook.write_bytes(b"hook")
         effect.write_bytes(b"effect")
         bgm.write_bytes(b"bgm")
         write_json(workflow, {"ok": True})
@@ -160,6 +209,7 @@ class PipelineTests(unittest.TestCase):
 
         pipeline.add_artifact("scripts", scripts)
         pipeline.add_artifact("comparison", comparison)
+        pipeline.add_artifact("hook", hook)
         pipeline.add_artifact("effect", effect)
         pipeline.add_artifact("bgm", bgm, source_url="https://cdn.example.com/bgm.mp3")
         workflow_item = pipeline.add_artifact("workflow", workflow)
@@ -171,8 +221,13 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(request["operation"], "assemble_localized_ad")
         self.assertEqual(request["audios"], ["https://cdn.example.com/bgm.mp3"])
         self.assertEqual(request["input_roles"]["videos"][-1], "fixed_logo_cta")
+        self.assertEqual(request["input_roles"]["videos"][0], "distinct_hook")
         self.assertEqual(request["composition"]["engine"], "makaron-agent-remotion")
+        self.assertEqual(request["composition"]["builder_skill_id"], "tiktok-video")
         self.assertEqual(request["composition"]["tts_engine"], "seed-audio")
+        self.assertEqual(request["composition"]["caption_format"], "remotion-caption-json")
+        self.assertTrue(request["composition"]["scene_bound_caption_timing"])
+        self.assertTrue(request["composition"]["hook_and_result_must_be_distinct"])
         self.assertFalse(request["composition"]["local_ffmpeg_audio_or_subtitle_postprocess"])
         self.assertTrue(request["composition"]["same_bgm_looped_across_full_video"])
 
@@ -222,6 +277,13 @@ class PipelineTests(unittest.TestCase):
         with Image.open(output) as image:
             self.assertEqual(image.size, (1080, 1920))
             self.assertEqual(image.mode, "RGB")
+
+    def test_vertical_resolution_accepts_720p_but_rejects_lower(self) -> None:
+        output = {"minimum_width": 720, "minimum_height": 1280}
+        self.assertTrue(is_vertical_resolution_acceptable({"width": 1080, "height": 1920}, output))
+        self.assertTrue(is_vertical_resolution_acceptable({"width": 720, "height": 1280}, output))
+        self.assertFalse(is_vertical_resolution_acceptable({"width": 540, "height": 960}, output))
+        self.assertFalse(is_vertical_resolution_acceptable({"width": 1280, "height": 720}, output))
 
     def test_agent_fail_advances_attempt_and_blocks_at_budget(self) -> None:
         path = self.make_campaign()

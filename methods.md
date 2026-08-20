@@ -10,7 +10,7 @@ Voiceover/subtitles use a selected subset of `en`, `ja`, and `yue`; app workflow
 
 ## Retry nodes, not campaigns
 
-Lock passed inputs. Retry only the failed generative node in `seedance-fast → kling → grok` order. Reset downstream dependents only when an upstream artifact changes.
+Lock passed inputs. Retry only the failed generative node in `seedance-2-0 → kling → grok` order. Reset downstream dependents only when an upstream artifact changes.
 
 ## Keep evidence with every artifact
 
@@ -47,3 +47,15 @@ Media URLs found anywhere in an Agent response are not automatically outputs: pr
 ## Derive timing ranges from multiple finished references
 
 Do not turn one finished ad into a universal frame chart. Measure several examples, keep the common order fixed, and encode only stable ranges: Hook 2.5–5 seconds, comparison about 2.5 seconds, workflow about 4 seconds, result 3–7 seconds, CTA 2–3 seconds, and total 15–20 seconds. Let mechanism clarity—not locale alone—choose the exact duration.
+
+## Derive scene cuts from narration, not guessed frames
+
+Generate the continuous Seed Audio take first, retain Caption JSON with measured `startMs`/`endMs`, and make scene boundaries contain their assigned lines. A scene may expand to fit natural speech; a subtitle or spoken line must never spill into the next semantic beat. Require a machine-readable timing contract before accepting a locally rendered Remotion fallback.
+
+## Separate Hook curiosity from result payoff
+
+Generate Hook and result as independent calls to the same target Skill. The Hook teases an intermediate moment; the result shows the complete payoff once. Reject reuse of the same shot, action, camera path, or retimed frames across both segments.
+
+## Treat platform minimum and delivery target separately
+
+For Meta Reels, target 1080×1920 but accept 720×1280 as the hard 9:16 floor. Keep key content inside the Meta overlay-safe center; a generic 140px top caption offset is not Meta-safe on a 1080×1920 canvas.

@@ -168,3 +168,14 @@ def probe_video(path: Path) -> dict[str, Any]:
         "duration": float(metadata.get("format", {}).get("duration", 0)),
         "has_audio": audio is not None,
     }
+
+
+def is_vertical_resolution_acceptable(info: dict[str, Any], output: dict[str, Any]) -> bool:
+    """Accept the 1080p target or a 9:16 fallback that is never below 720p."""
+    width = int(info.get("width", 0))
+    height = int(info.get("height", 0))
+    minimum_width = max(720, int(output.get("minimum_width", 720)))
+    minimum_height = max(1280, int(output.get("minimum_height", 1280)))
+    if width < minimum_width or height < minimum_height:
+        return False
+    return abs((width / height) - (9 / 16)) <= 0.01

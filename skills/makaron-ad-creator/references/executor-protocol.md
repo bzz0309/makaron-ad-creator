@@ -10,10 +10,10 @@ The executing Agent must:
 2. use `makaron chat --project <project_id>` for every generative node except `bgm`; execute `bgm` with exactly one standalone `makaron music create` call;
 3. use the request's exact prompt and attached inputs;
 4. save the requested artifact locally;
-5. call `makaron-ad complete ...` with the node and artifact;
+5. call `makaron-ad complete ...` with the node and artifact; a `final-*` node must also pass `--timing-manifest` with the contract v2 Caption/scene sidecar requested in JSON;
 6. resume `makaron-ad run` until `PASS` or `BLOCKED`.
 
-If generation itself fails, call `makaron-ad fail <campaign.json> --node <node-id> --error "<concise cause>"`, then resume. The next request advances from `seedance-fast` to `kling` to `grok` where video routing applies.
+If generation itself fails, call `makaron-ad fail <campaign.json> --node <node-id> --error "<concise cause>"`, then resume. The next request advances from `seedance-2-0` to `kling` to `grok` where video routing applies.
 
 Never mark a request complete from prose alone. The artifact must exist and match the required file class.
 
@@ -23,9 +23,9 @@ Never mark a request complete from prose alone. The artifact must exist and matc
 |---|---|
 | `generate_json` | UTF-8 JSON with exactly five strings under each selected locale key and no unselected locale keys |
 | `generate_image` | One decoded PNG/JPEG/WebP |
-| `invoke_skill_video` | One MP4 created by the exact target Marketplace Skill |
+| `invoke_skill_video` | One 9:16 MP4 created by the exact target Marketplace Skill, targeting 1080×1920 and never below 720×1280; Hook/result requests are distinct artifacts |
 | `generate_instrumental_bgm` | One at-least-20-second instrumental audio file plus its generated HTTP(S) source URL; call `complete` with `--source-url` so chat can attach the long BGM without local upload limits |
-| `assemble_localized_ad` | One complete localized five-part 1080×1920 H.264/AAC MP4 rendered by one project-bound Makaron chat through internal Remotion; inputs include CTA and BGM, and there is no local final post-process |
+| `assemble_localized_ad` | One complete localized five-part 9:16 H.264/AAC MP4, target 1080×1920/minimum 720×1280, rendered by one project-bound Makaron chat through the `tiktok-video` Remotion builder; Caption JSON timings stay inside assigned scenes and Meta safe zones; inputs include CTA and BGM, with no local final post-process |
 
 ## Recovery
 
