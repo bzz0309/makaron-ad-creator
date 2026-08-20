@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from makaron_ad_creator.adapter import (
     MakaronAdapter,
+    extract_generated_image_urls,
     extract_generated_video_urls,
     extract_json_object,
     extract_remotion_design,
@@ -18,6 +19,21 @@ from makaron_ad_creator.util import AdCreatorError
 
 
 class AdapterTests(unittest.TestCase):
+    def test_generated_image_urls_exclude_uploaded_source_attachments(self) -> None:
+        response = {
+            "media_urls": ["https://example.com/uploaded-input.jpg"],
+            "output": [{"type": "text", "content": "no generated image"}],
+            "result": {"images": []},
+        }
+        self.assertEqual(extract_generated_image_urls(response), [])
+
+    def test_generated_image_urls_accept_authoritative_result_image(self) -> None:
+        response = {
+            "output": [{"type": "image", "url": "https://example.com/after.png"}],
+            "result": {"images": [{"imageUrl": "https://example.com/after.png"}]},
+        }
+        self.assertEqual(extract_generated_image_urls(response), ["https://example.com/after.png"])
+
     def test_generated_video_urls_exclude_uploaded_source_attachments(self) -> None:
         response = {
             "media_urls": ["https://example.com/uploaded-cta.mp4"],
@@ -88,6 +104,29 @@ class AdapterTests(unittest.TestCase):
                         require_generated_video=True,
                     )
             self.assertTrue((root / "run" / "responses" / "final-en.json").is_file())
+
+    def test_screen_demo_does_not_use_local_remotion_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            raw = {
+                "responseId": "response-1",
+                "result": {"videos": [], "designs": [{"snapshotId": "draft-1"}]},
+            }
+            with patch("makaron_ad_creator.adapter.run", return_value=SimpleNamespace(stdout=json.dumps(raw), stderr="", returncode=0)), \
+                 patch.object(adapter, "render_remotion_fallback") as fallback:
+                with self.assertRaisesRegex(AdCreatorError, "no generated video"):
+                    adapter.chat(
+                        node_id="workflow-en",
+                        prompt="screen demo",
+                        destination=root / "workflow.mp4",
+                        require_generated_video=True,
+                        allow_remotion_fallback=False,
+                    )
+            fallback.assert_not_called()
 
     def test_extract_json_object_accepts_selected_locale_subset(self) -> None:
         response = {"result": {"text": '{"yue":["一","二","三","四","五"]}'}}

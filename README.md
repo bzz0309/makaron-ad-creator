@@ -41,7 +41,9 @@ Agent 也可以用更短的二参数形式：
 makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 ```
 
-这一条命令会自动：查找 Skill 元数据和 ID、首次创建或后续复用该 Skill 的专属 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。
+这一条命令会自动：查找 Skill 元数据和 ID、首次创建或后续复用该 Skill 的专属 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。After 不再按固定百分比抽帧：Makaron 会分析完整效果视频并导出最精彩且稳定的真实源帧；对比图也由 Makaron 基于锁定的 Before/After 像素排版。
+
+默认录屏节点不再由本地脚本生产。CLI 调用 Makaron 公开可选的 `screen-demo`，把对应语言的 v5 iOS UI 基准图作为视觉参考，交由 Makaron 的 Remotion runtime 生成约 4 秒的合成 App 操作视频。内置但不可公开选择的 `synthetic-screen-recording` 不会被 CLI 直接调用；旧本地 renderer 仅保留为历史兼容工具，不在当前 DAG 中。
 
 每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`，但 Hook 与效果段会分别调用目标 Skill 生成，禁止复用同一镜头、动作或素材帧。节奏会在 15–20 秒内自适应：Hook 默认 2.5 秒、复杂动作最多 5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留完整 payoff。视频模型优先 Seedance 2.0，失败才依次回退；输出目标为 1080×1920，最低接受 720×1280。
 
@@ -75,7 +77,7 @@ makaron-ad doctor
 - No per-asset approval is required after rights, claims, project binding, and offer are configured. Failed nodes retry independently.
 - Final nodes accept only newly generated video outputs, never uploaded source attachments. A valid Makaron Remotion design can be rendered by the bundled local Remotion fallback when the platform exporter is unavailable; the same design props, Seed Audio voiceover, captions, and BGM are preserved.
 - Publication is never automatic. Delivered review state is `PAUSED` / human approval required.
-- Synthetic workflow generation comes from the supplied v5 iOS implementation and live/offline Marketplace metadata. It is never labeled as genuine screen recording.
+- Synthetic workflow generation is produced by Makaron's public `screen-demo` Skill with supplied v5 iOS UI frames as references. It is never labeled as genuine screen recording; the legacy local v5 renderer is not part of the default DAG.
 
 ## 内部维护命令
 
@@ -93,4 +95,4 @@ retry --node <id>              reset one node and downstream dependents
 
 ## Delivery
 
-Successful campaigns place only the selected MP4s and audit package in `<campaign>/deliverables/`. The npm package keeps the original five-Skill directory structure, but only `makaron-ad-creator` is installed as the public Agent entrypoint. `edit-makaron-app-workflow-recording` is the user-supplied v5 iOS package copied unchanged.
+Successful campaigns place only the selected MP4s and audit package in `<campaign>/deliverables/`. The npm package keeps the original five-Skill directory structure, but only `makaron-ad-creator` is installed as the public Agent entrypoint. `edit-makaron-app-workflow-recording` retains the user-supplied v5 iOS references and compatibility renderer; the active CLI passes those references to Makaron `screen-demo`.

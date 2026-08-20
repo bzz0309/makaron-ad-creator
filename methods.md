@@ -59,3 +59,11 @@ Generate Hook and result as independent calls to the same target Skill. The Hook
 ## Treat platform minimum and delivery target separately
 
 For Meta Reels, target 1080×1920 but accept 720×1280 as the hard 9:16 floor. Keep key content inside the Meta overlay-safe center; a generic 140px top caption offset is not Meta-safe on a 1080×1920 canvas.
+
+## Select evidence frames by visual quality, not timeline percentage
+
+An After image should be an exact decoded frame from the effect result, but its timestamp must be chosen after examining the whole clip. Reject transitions, blur, black frames, incomplete transformations, identity drift, UI, text, and watermark contamination. A hard-coded percentage such as 82% is only a timing guess and is not a creative-quality rule.
+
+## Require authoritative generated images as well as videos
+
+Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, accept only a newly generated `screen-demo` video and disable the final-ad local Remotion fallback because its contract and duration are different. This prevents an input attachment or final-ad renderer from silently satisfying the wrong node.

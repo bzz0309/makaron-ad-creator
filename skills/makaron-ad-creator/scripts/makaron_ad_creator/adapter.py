@@ -56,7 +56,11 @@ class MakaronAdapter:
         videos: list[Path] | None = None,
         audios: list[Path | str] | None = None,
         require_generated_video: bool = False,
+        require_generated_image: bool = False,
+        allow_remotion_fallback: bool = True,
     ) -> dict[str, Any]:
+        if require_generated_video and require_generated_image:
+            raise AdCreatorError("A chat output cannot require both a generated video and generated image")
         prompt_path = self.run_dir / "prompts" / f"{node_id}.txt"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(prompt.rstrip() + "\n", encoding="utf-8")
@@ -76,19 +80,27 @@ class MakaronAdapter:
         raw: Any = values[-1] if values else {"text": result.stdout}
         response_id = extract_response_id(raw)
         urls = extract_media_urls(raw)
-        needs_materialized_response = not urls or (
-            require_generated_video
-            and not extract_generated_video_urls(raw)
-            and not extract_remotion_design(raw)
+        generated_video_urls = extract_generated_video_urls(raw)
+        generated_image_urls = extract_generated_image_urls(raw)
+        needs_materialized_response = (
+            not urls
+            or (require_generated_video and not generated_video_urls and not extract_remotion_design(raw))
+            or (require_generated_image and not generated_image_urls)
         )
         if response_id and needs_materialized_response:
-            raw, urls = self._materialize(node_id, response_id, raw)
+            required_kind = "video" if require_generated_video else "image" if require_generated_image else None
+            raw, urls = self._materialize(node_id, response_id, raw, required_kind=required_kind)
         response_path = self.run_dir / "responses" / f"{node_id}.json"
         write_json(response_path, {"response_id": response_id, "media_urls": urls, "response": raw})
         if destination:
-            downloadable = extract_generated_video_urls(raw) if require_generated_video else urls
+            if require_generated_video:
+                downloadable = extract_generated_video_urls(raw)
+            elif require_generated_image:
+                downloadable = extract_generated_image_urls(raw)
+            else:
+                downloadable = urls
             if not downloadable:
-                if require_generated_video:
+                if require_generated_video and allow_remotion_fallback:
                     fallback = self.render_remotion_fallback(node_id, raw, destination)
                     return {
                         "response_id": response_id,
@@ -97,7 +109,8 @@ class MakaronAdapter:
                         "response_path": str(response_path),
                         "render_fallback": fallback,
                     }
-                raise AdCreatorError(f"Makaron returned no downloadable media for {node_id}; response_id={response_id or 'unknown'}")
+                media_label = "generated video" if require_generated_video else "generated image" if require_generated_image else "downloadable media"
+                raise AdCreatorError(f"Makaron returned no {media_label} for {node_id}; response_id={response_id or 'unknown'}")
             expected_video = destination.suffix.lower() in {".mp4", ".mov", ".m4v"}
             matching = []
             for url in downloadable:
@@ -194,7 +207,14 @@ class MakaronAdapter:
             "response_path": str(response_path),
         }
 
-    def _materialize(self, node_id: str, response_id: str, fallback: Any) -> tuple[Any, list[str]]:
+    def _materialize(
+        self,
+        node_id: str,
+        response_id: str,
+        fallback: Any,
+        *,
+        required_kind: str | None = None,
+    ) -> tuple[Any, list[str]]:
         attempts = [
             [self.binary, "responses", "get", response_id, "--wait", "--materialize", "--json"],
             [self.binary, "responses", "get", response_id, "--wait", "--json"],
@@ -210,7 +230,14 @@ class MakaronAdapter:
             values = list(json_candidates(result.stdout))
             last = values[-1] if values else {"text": result.stdout}
             urls = extract_media_urls(last)
-            if urls:
+            generated = (
+                extract_generated_video_urls(last)
+                if required_kind == "video"
+                else extract_generated_image_urls(last)
+                if required_kind == "image"
+                else urls
+            )
+            if generated or (required_kind == "video" and extract_remotion_design(last)):
                 return last, urls
         return last, []
 
@@ -247,6 +274,43 @@ def extract_generated_video_urls(response: Any) -> list[str]:
         for item in root.get("videos", []) if isinstance(root.get("videos"), list) else []:
             if isinstance(item, dict):
                 add(item.get("videoUrl") or item.get("video_url") or item.get("url"))
+            else:
+                add(item)
+    return found
+
+
+def extract_generated_image_urls(response: Any) -> list[str]:
+    """Return only images produced by the response, never uploaded source attachments."""
+    found: list[str] = []
+    roots = [response]
+    if isinstance(response, dict) and isinstance(response.get("response"), dict):
+        roots.append(response["response"])
+
+    def add(candidate: Any) -> None:
+        if not isinstance(candidate, str) or not candidate.startswith(("https://", "http://")):
+            return
+        suffix = Path(urllib.parse.urlparse(candidate).path).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".avif"} and "image" not in candidate.lower():
+            return
+        if candidate not in found:
+            found.append(candidate)
+
+    for root in roots:
+        if not isinstance(root, dict):
+            continue
+        for item in root.get("output", []) if isinstance(root.get("output"), list) else []:
+            if isinstance(item, dict) and str(item.get("type", "")).lower() == "image":
+                add(item.get("url") or item.get("imageUrl") or item.get("image_url"))
+        result = root.get("result")
+        if isinstance(result, dict):
+            for item in result.get("images", []) if isinstance(result.get("images"), list) else []:
+                if isinstance(item, dict):
+                    add(item.get("imageUrl") or item.get("image_url") or item.get("url"))
+                else:
+                    add(item)
+        for item in root.get("images", []) if isinstance(root.get("images"), list) else []:
+            if isinstance(item, dict):
+                add(item.get("imageUrl") or item.get("image_url") or item.get("url"))
             else:
                 add(item)
     return found

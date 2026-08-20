@@ -12,7 +12,7 @@ from PIL import Image
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, plan_for
-from makaron_ad_creator.prompts import bgm_prompt, final_prompt, hook_prompt
+from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, final_prompt, hook_prompt, workflow_prompt
 from makaron_ad_creator.schema import DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -90,6 +90,9 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(qc["depends_on"], ["final-yue"])
         final = next(node for node in plan if node["id"] == "final-yue")
         self.assertIn("bgm", final["depends_on"])
+        self.assertIn("workflow-yue", node_ids)
+        self.assertNotIn("workflow-en", node_ids)
+        self.assertIn("workflow-yue", final["depends_on"])
 
     def test_all_ad_locales_have_fixed_ui_mapping(self) -> None:
         self.assertEqual(
@@ -105,8 +108,12 @@ class PipelineTests(unittest.TestCase):
         plan = plan_for(validate_config(read_json(path), path))
         self.assertEqual([node["id"] for node in plan].count("bgm"), 1)
         for locale in ("en", "ja", "yue"):
+            self.assertIn(f"workflow-{locale}", [node["id"] for node in plan])
             final = next(node for node in plan if node["id"] == f"final-{locale}")
             self.assertIn("bgm", final["depends_on"])
+            self.assertIn(f"workflow-{locale}", final["depends_on"])
+        self.assertEqual(next(node for node in plan if node["id"] == "after")["kind"], "generate_image")
+        self.assertEqual(next(node for node in plan if node["id"] == "comparison")["kind"], "generate_image")
 
     def test_campaign_uses_bundled_fixed_logo_cta(self) -> None:
         path = self.make_campaign()
@@ -198,13 +205,11 @@ class PipelineTests(unittest.TestCase):
         hook = self.root / "hook.mp4"
         effect = self.root / "effect.mp4"
         bgm = self.root / "bgm.mp3"
-        workflow = self.root / "workflow.json"
         workflow_en = self.root / "workflow-en.mp4"
         comparison.write_bytes(b"comparison")
         hook.write_bytes(b"hook")
         effect.write_bytes(b"effect")
         bgm.write_bytes(b"bgm")
-        write_json(workflow, {"ok": True})
         workflow_en.write_bytes(b"workflow")
 
         pipeline.add_artifact("scripts", scripts)
@@ -212,8 +217,7 @@ class PipelineTests(unittest.TestCase):
         pipeline.add_artifact("hook", hook)
         pipeline.add_artifact("effect", effect)
         pipeline.add_artifact("bgm", bgm, source_url="https://cdn.example.com/bgm.mp3")
-        workflow_item = pipeline.add_artifact("workflow", workflow)
-        workflow_item["locale_outputs"] = {"en": str(workflow_en)}
+        pipeline.add_artifact("workflow-en", workflow_en)
         node = next(item for item in pipeline.plan if item["id"] == "final-en")
         pipeline._write_agent_request(node)
 
@@ -230,6 +234,40 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(request["composition"]["hook_and_result_must_be_distinct"])
         self.assertFalse(request["composition"]["local_ffmpeg_audio_or_subtitle_postprocess"])
         self.assertTrue(request["composition"]["same_bgm_looped_across_full_video"])
+
+    def test_makaron_asset_requests_are_explicit_and_locale_scoped(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["locales"] = locale_config(["en"])
+        write_json(path, config)
+        pipeline = Pipeline(path, executor="agent")
+        effect = self.root / "effect.mp4"
+        before = self.root / "before.png"
+        after = self.root / "after.png"
+        effect.write_bytes(b"effect")
+        Image.new("RGB", (720, 1280), "blue").save(before)
+        Image.new("RGB", (720, 1280), "orange").save(after)
+        pipeline.add_artifact("effect", effect)
+        pipeline.add_artifact("before", before)
+        pipeline.add_artifact("after", after)
+
+        for node_id in ("after", "comparison", "workflow-en"):
+            node = next(item for item in pipeline.plan if item["id"] == node_id)
+            pipeline._write_agent_request(node)
+
+        after_request = read_json(path.parent / "run" / "requests" / "after.json")
+        self.assertEqual(after_request["operation"], "select_exact_effect_keyframe")
+        self.assertIn("strongest exact decoded source frame", after_request["selection_rule"])
+        self.assertNotIn("82%", after_request["prompt"])
+        comparison_request = read_json(path.parent / "run" / "requests" / "comparison.json")
+        self.assertEqual(comparison_request["operation"], "compose_comparison_in_makaron")
+        workflow_request = read_json(path.parent / "run" / "requests" / "workflow-en.json")
+        self.assertEqual(workflow_request["builder_skill_id"], "screen-demo")
+        self.assertEqual(workflow_request["ui_locale"], "en")
+        self.assertTrue(workflow_request["synthetic_not_real_recording"])
+        self.assertIn("screen-demo", workflow_prompt(config, "en"))
+        self.assertIn("strongest", after_prompt(config))
+        self.assertIn("Makaron", comparison_prompt(config))
 
     def test_schema_rejects_wrong_ui_mapping_for_selected_locale(self) -> None:
         path = self.make_campaign()

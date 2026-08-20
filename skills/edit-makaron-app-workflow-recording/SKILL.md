@@ -14,6 +14,10 @@ description: >-
 
 # Edit Makaron App Workflow Recording
 
+## Master-CLI integration
+
+When this package is orchestrated by `makaron-ad-creator-cli`, do not run the local synthetic renderer. The master CLI supplies this v5 package's locale-correct `home-top`, `home-target`, and `detail` baseline frames to Makaron's public `screen-demo` Skill, and Makaron produces the four-second Remotion workflow artifact in the bound project. The commands below remain available only for standalone compatibility, regression testing, or explicit repair work.
+
 ## Choose the mode
 
 Default to `synthetic`. Require only a Marketplace Skill ID or exact label and

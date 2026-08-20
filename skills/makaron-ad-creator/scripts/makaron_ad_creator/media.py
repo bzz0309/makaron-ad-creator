@@ -67,6 +67,19 @@ def compose_comparison(before: Path, after: Path, output: Path, width: int = 108
     return output
 
 
+def probe_image(path: Path) -> dict[str, Any]:
+    with Image.open(path) as image:
+        width, height = image.size
+        image.verify()
+    return {
+        "path": str(path),
+        "sha256": sha256(path),
+        "bytes": path.stat().st_size,
+        "width": int(width),
+        "height": int(height),
+    }
+
+
 def probe_audio(path: Path) -> dict[str, Any]:
     ffprobe = require_binary("ffprobe")
     result = run([

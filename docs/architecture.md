@@ -22,8 +22,8 @@ master Skill
 global makaron-ad Node launcher
     ↓ portable runtime + bundled dependencies
 Python orchestration core
-    ├── local: validate / After frame / comparison / synthetic UI / QC / package
-    ├── Makaron: script / Before / distinct target-Skill Hook + result / localized final
+    ├── local: validate / QC / package
+    ├── Makaron: script / Before / distinct target-Skill Hook + result / best source-frame After / comparison / localized screen-demo / final
     └── Agent protocol: request.json → artifact → complete → resume
 ```
 
@@ -33,7 +33,7 @@ Rights/consent, claim truth, initial persistent project binding, and publication
 
 ## Source-package resolution
 
-- Use the user-supplied `edit-makaron-app-workflow-recording-v5-ios.zip` implementation and bundled baselines unchanged; the packaged folder is verified by zero-diff comparison.
+- Use the user-supplied v5 iOS baseline frames as the visual authority supplied to Makaron's public `screen-demo` Skill. Keep the old renderer only for explicit compatibility work; it is not an active production node.
 - Do not depend on the environment-level `social-ad-creator` Skill; it was not part of the user's source package.
 - Retain recording mode only for explicitly supplied genuine footage.
 - Replace the old hard-coded project and `--project auto` instructions.

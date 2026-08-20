@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
-from .media import bgm_similarity_in_cta, compose_comparison, extract_after_frame, is_vertical_resolution_acceptable, probe_audio, probe_video
-from .prompts import before_prompt, bgm_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt
-from .schema import LOCALE_TO_UI, ad_locales, ui_locales, validate_config
-from .util import AdCreatorError, json_candidates, read_json, run, sha256, write_json
+from .media import bgm_similarity_in_cta, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
+from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt, workflow_prompt
+from .schema import LOCALE_TO_UI, ad_locales, validate_config
+from .util import AdCreatorError, read_json, sha256, write_json
 
 
 MODELS = ["seedance-2-0", "kling", "grok"]
@@ -28,16 +28,21 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "hook", "kind": "generate_video", "depends_on": ["validate"]},
         {"id": "effect", "kind": "generate_video", "depends_on": ["validate"]},
         {"id": "bgm", "kind": "generate_audio", "depends_on": ["validate"]},
-        {"id": "after", "kind": "local", "depends_on": ["effect"]},
-        {"id": "comparison", "kind": "local", "depends_on": ["before", "after"]},
-        {"id": "workflow", "kind": "local", "depends_on": ["validate"]},
+        {"id": "after", "kind": "generate_image", "depends_on": ["effect"]},
+        {"id": "comparison", "kind": "generate_image", "depends_on": ["before", "after"]},
     ]
     selected_locales = ad_locales(config)
     for locale in selected_locales:
         nodes.append({
+            "id": f"workflow-{locale}",
+            "kind": "generate_video",
+            "depends_on": ["validate"],
+        })
+    for locale in selected_locales:
+        nodes.append({
             "id": f"final-{locale}",
             "kind": "generate_video",
-            "depends_on": ["scripts", "comparison", "hook", "effect", "workflow", "bgm"],
+            "depends_on": ["scripts", "comparison", "hook", "effect", f"workflow-{locale}", "bgm"],
         })
     nodes += [
         {"id": "qc", "kind": "local", "depends_on": [f"final-{locale}" for locale in selected_locales]},
@@ -137,7 +142,7 @@ class Pipeline:
 
     def _execute_with_budget(self, node: dict[str, Any]) -> None:
         state = self.state["nodes"][node["id"]]
-        maximum = int(self.config.get("automation", {}).get("max_attempts", 3)) if node["kind"].startswith("generate_") or node["id"] == "workflow" else 1
+        maximum = int(self.config.get("automation", {}).get("max_attempts", 3)) if node["kind"].startswith("generate_") else 1
         while state["attempts"] < maximum:
             state["attempts"] += 1
             state["status"] = "RUNNING"
@@ -172,15 +177,11 @@ class Pipeline:
         elif node_id == "bgm":
             self._generate_bgm()
         elif node_id == "after":
-            output = self.run_dir / "assets" / "after.png"
-            extract_after_frame(self.artifact("effect", ".mp4"), output)
-            self.add_artifact(node_id, output)
+            self._generate_after()
         elif node_id == "comparison":
-            output = self.run_dir / "assets" / "comparison.png"
-            compose_comparison(self.artifact("before"), self.artifact("after"), output)
-            self.add_artifact(node_id, output)
-        elif node_id == "workflow":
-            self._generate_workflow()
+            self._generate_comparison()
+        elif node_id.startswith("workflow-"):
+            self._generate_workflow(node_id.split("-", 1)[1])
         elif node_id.startswith("final-"):
             self._generate_final(node_id.split("-", 1)[1], attempt)
         elif node_id == "qc":
@@ -233,7 +234,11 @@ class Pipeline:
     def _generate_before(self) -> None:
         output = self.run_dir / "assets" / "before.png"
         result = self._adapter().chat(
-            node_id="before", prompt=before_prompt(self.config), images=[Path(self.config["input_image"])], destination=output
+            node_id="before",
+            prompt=before_prompt(self.config),
+            images=[Path(self.config["input_image"])],
+            destination=output,
+            require_generated_image=True,
         )
         self.add_artifact("before", output, response_id=result.get("response_id"))
 
@@ -283,40 +288,70 @@ class Pipeline:
             duration=info["duration"],
         )
 
-    def _generate_workflow(self) -> None:
+    def _generate_after(self) -> None:
+        output = self.run_dir / "assets" / "after.png"
+        result = self._adapter().chat(
+            node_id="after",
+            prompt=after_prompt(self.config),
+            videos=[self.artifact("effect", ".mp4")],
+            destination=output,
+            require_generated_image=True,
+        )
+        info = probe_image(output)
+        if not is_vertical_resolution_acceptable(info, self.config["output"]):
+            raise AdCreatorError("Makaron After keyframe must be vertical 9:16 and at least 720x1280")
+        self.add_artifact("after", output, response_id=result.get("response_id"), source="makaron-exact-effect-keyframe", resolution=f"{info['width']}x{info['height']}")
+
+    def _generate_comparison(self) -> None:
+        output = self.run_dir / "assets" / "comparison.png"
+        result = self._adapter().chat(
+            node_id="comparison",
+            prompt=comparison_prompt(self.config),
+            images=[self.artifact("before"), self.artifact("after")],
+            destination=output,
+            require_generated_image=True,
+        )
+        info = probe_image(output)
+        if not is_vertical_resolution_acceptable(info, self.config["output"]):
+            raise AdCreatorError("Makaron comparison must be vertical 9:16 and at least 720x1280")
+        self.add_artifact("comparison", output, response_id=result.get("response_id"), source="makaron-composition", resolution=f"{info['width']}x{info['height']}")
+
+    def _workflow_references(self, ad_locale: str) -> list[Path]:
         main_skill_dir = Path(__file__).resolve().parents[2]
-        script = main_skill_dir.parent / "edit-makaron-app-workflow-recording" / "scripts" / "workflow_recording.py"
-        output_dir = self.run_dir / "workflow"
-        command = [
-            "python3", str(script), "synthesize", "--skill", self.config["target_skill"]["id"],
-            "--locales", ",".join(ui_locales(self.config)), "--output-dir", str(output_dir),
+        ui_locale = LOCALE_TO_UI[ad_locale]
+        reference_dir = main_skill_dir.parent / "edit-makaron-app-workflow-recording" / "assets" / "ui-baseline" / ui_locale
+        references = [
+            reference_dir / "home-top.png",
+            reference_dir / "home-target.png",
+            reference_dir / "detail.png",
         ]
-        if self.config.get("catalog_json"):
-            command += ["--catalog-json", self.config["catalog_json"]]
-        result = run(command, timeout=1800)
-        candidates = [value for value in json_candidates(result.stdout) if isinstance(value, dict)]
-        if not candidates:
-            raise AdCreatorError("Synthetic workflow returned no JSON result")
-        parsed = candidates[-1]
-        outputs = parsed.get("outputs", [])
-        expected_locales = ui_locales(self.config)
-        returned_locales = [item.get("locale") for item in outputs if isinstance(item, dict)]
-        if len(returned_locales) != len(expected_locales) or set(returned_locales) != set(expected_locales):
-            raise AdCreatorError(
-                "Synthetic workflow returned the wrong UI locales; "
-                f"expected {expected_locales}, got {returned_locales}"
-            )
-        manifest = Path(parsed["manifest"])
-        artifact = self.add_artifact("workflow", manifest)
-        artifact["locale_outputs"] = {item["locale"]: item["output"] for item in outputs}
+        missing = [path for path in references if not path.is_file()]
+        if missing:
+            raise AdCreatorError(f"Missing bundled v5 workflow reference: {missing[0]}")
+        return references
+
+    def _generate_workflow(self, ad_locale: str) -> None:
+        node_id = f"workflow-{ad_locale}"
+        output = self.run_dir / "workflow" / f"workflow-{ad_locale}.mp4"
+        images = [Path(self.config["input_image"]), *self._workflow_references(ad_locale)]
+        result = self._adapter().chat(
+            node_id=node_id,
+            prompt=workflow_prompt(self.config, ad_locale),
+            skill_id="screen-demo",
+            images=images,
+            destination=output,
+            require_generated_video=True,
+            allow_remotion_fallback=False,
+        )
+        info = probe_video(output)
+        if not is_vertical_resolution_acceptable(info, self.config["output"]):
+            raise AdCreatorError("Makaron screen-demo workflow must be vertical 9:16 and at least 720x1280")
+        if not 3.5 <= float(info["duration"]) <= 4.5:
+            raise AdCreatorError("Makaron screen-demo workflow must be 3.5-4.5 seconds")
+        self.add_artifact(node_id, output, response_id=result.get("response_id"), source="makaron-screen-demo", ui_locale=LOCALE_TO_UI[ad_locale], resolution=f"{info['width']}x{info['height']}")
 
     def _workflow_for(self, ad_locale: str) -> Path:
-        ui_locale = LOCALE_TO_UI[ad_locale]
-        item = self.state["nodes"]["workflow"]["artifacts"][0]
-        path = Path(item["locale_outputs"][ui_locale])
-        if not path.is_file():
-            raise AdCreatorError(f"Missing workflow video for {ui_locale}")
-        return path
+        return self.artifact(f"workflow-{ad_locale}", ".mp4")
 
     def _bgm_input(self) -> str:
         item = self.state["nodes"]["bgm"]["artifacts"][0]
@@ -565,6 +600,34 @@ class Pipeline:
             request.update({"operation": "invoke_skill_video", "prompt": hook_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "hook.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "effect":
             request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
+        elif node_id == "after":
+            request.update({
+                "operation": "select_exact_effect_keyframe",
+                "prompt": after_prompt(self.config),
+                "videos": [str(self.artifact("effect", ".mp4"))],
+                "selection_rule": "analyze full clip and export the strongest exact decoded source frame; never regenerate",
+                "expected": "after.png",
+            })
+        elif node_id == "comparison":
+            request.update({
+                "operation": "compose_comparison_in_makaron",
+                "prompt": comparison_prompt(self.config),
+                "images": [str(self.artifact("before")), str(self.artifact("after"))],
+                "input_roles": ["locked_before", "locked_exact_effect_keyframe"],
+                "expected": "comparison.png",
+            })
+        elif node_id.startswith("workflow-"):
+            locale = node_id.split("-", 1)[1]
+            request.update({
+                "operation": "generate_screen_demo_in_makaron",
+                "prompt": workflow_prompt(self.config, locale),
+                "images": [self.config["input_image"], *[str(path) for path in self._workflow_references(locale)]],
+                "builder_skill_id": "screen-demo",
+                "ui_locale": LOCALE_TO_UI[locale],
+                "synthetic_not_real_recording": True,
+                "expected": f"workflow-{locale}.mp4",
+                "minimum_resolution": "720x1280",
+            })
         elif node_id == "bgm":
             request.update({
                 "operation": "generate_instrumental_bgm",
@@ -642,7 +705,7 @@ class Pipeline:
         if node_id == "scripts":
             scripts = read_json(artifact)
             self._validate_scripts(scripts)
-        elif node_id in {"hook", "effect"} or node_id.startswith("final-"):
+        elif node_id in {"hook", "effect"} or node_id.startswith("workflow-") or node_id.startswith("final-"):
             if artifact.suffix.lower() != ".mp4":
                 raise AdCreatorError(f"{node_id} requires an MP4 artifact")
             if node_id.startswith("final-"):
@@ -656,8 +719,8 @@ class Pipeline:
             if artifact.suffix.lower() not in {".mp3", ".wav", ".m4a", ".aac"}:
                 raise AdCreatorError("bgm requires an MP3/WAV/M4A/AAC artifact")
             probe_audio(artifact)
-        elif node_id == "before" and artifact.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
-            raise AdCreatorError("before requires an image artifact")
+        elif node_id in {"before", "after", "comparison"} and artifact.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}:
+            raise AdCreatorError(f"{node_id} requires an image artifact")
         if node_id == "scripts":
             destination = self.run_dir / "scripts.json"
         elif node_id == "before":
@@ -666,6 +729,13 @@ class Pipeline:
             destination = self.run_dir / "assets" / "hook.mp4"
         elif node_id == "effect":
             destination = self.run_dir / "assets" / "effect.mp4"
+        elif node_id == "after":
+            destination = self.run_dir / "assets" / ("after" + artifact.suffix.lower())
+        elif node_id == "comparison":
+            destination = self.run_dir / "assets" / ("comparison" + artifact.suffix.lower())
+        elif node_id.startswith("workflow-"):
+            locale = node_id.split("-", 1)[1]
+            destination = self.run_dir / "workflow" / f"workflow-{locale}.mp4"
         elif node_id == "bgm":
             destination = self.run_dir / "assets" / ("bgm" + artifact.suffix.lower())
         elif node_id.startswith("final-"):

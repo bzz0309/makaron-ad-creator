@@ -13,6 +13,7 @@ LOCALE_RULES = {
 }
 
 LOCALE_NAMES = {"en": "English", "ja": "Japanese", "yue": "Hong Kong Cantonese"}
+UI_LOCALE_NAMES = {"en": "English", "ja": "Japanese", "yue": "Traditional Chinese for Hong Kong Cantonese ads"}
 SCRIPT_ANCHORS = {
     "en": ["...", "...", "Open Makaron.", "Use the template.", "..."],
     "ja": ["...", "...", "Makaronを開いて。", "テンプレートを使って。", "..."],
@@ -67,6 +68,33 @@ STYLE CONSTRAINTS: {constraints}
 For an authorized, clearly adult fashion subject only, and only when compatible with the source image and target Skill, use elegant glamorous styling such as an open neckline or exposed shoulders and a coordinated midriff silhouette; a fuller shot may show the legs. Keep it non-explicit and non-vulgar. Never apply this direction to minors, age-ambiguous people, products, nonhuman subjects, or unrelated transformations.
 Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. Show the complete transformation payoff once. Make this clip visibly different from the separately generated Hook: no repeated shot, action, camera path, or recycled source frames. Use one readable action and restrained camera motion. No text, logo, UI, watermark, fake endorsement, unsupported claim, morphing, or extra objects. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280. No source audio.
 Return one MP4 only."""
+
+
+def after_prompt(config: dict[str, Any]) -> str:
+    return f"""Use attached video 1 as the exact target-Skill effect source for {config['target_skill']['name']}.
+Analyze the complete video, not only its final seconds. Select the single strongest truthful keyframe that most clearly shows the completed supported effect: {config['target_skill']['core']}.
+Evaluate stable candidate frames across the whole clip. Reject transition, motion-blurred, black, obstructed, malformed, identity-drifted, incomplete-effect, text, UI, and watermark frames. Prefer the clearest complete payoff, stable face/body or product geometry, readable action, strong composition, and maximum contrast with an ordinary Before image.
+Export the exact decoded source-video frame at the chosen timestamp. Do not redraw, regenerate, beautify, retouch, extend, replace, or reinterpret any pixel. Preserve the source frame's identity and effect exactly. Record the selected timestamp and concise selection reason in response metadata, but return one PNG image as the generated media output.
+Target 1080x1920; minimum 720x1280; exact 9:16."""
+
+
+def comparison_prompt(config: dict[str, Any]) -> str:
+    return f"""Create one exact vertical Before/After comparison image inside this bound Makaron project.
+ATTACHED ROLES: image 1 is the ordinary Before; image 2 is the exact keyframe extracted from the {config['target_skill']['name']} effect video.
+Use both attached images as locked source pixels. Do not redraw, regenerate, retouch, relight, restyle, change identity, or invent missing content.
+Compose a 1080x1920 black canvas with two equal side-by-side cover-fit panels, a narrow 10px center gap, and enough crop protection to keep the face and important effect visible. Put BEFORE under the left panel and AFTER under the right panel in bold white text with a black outline. Keep all key content inside the Meta safe center and do not add any other title, logo, watermark, decoration, or claim.
+Return one newly exported PNG only."""
+
+
+def workflow_prompt(config: dict[str, Any], locale: str) -> str:
+    ui_locale = UI_LOCALE_NAMES[locale]
+    return f"""Use Makaron's built-in screen-demo workflow and current Remotion runtime to create one honest synthetic Makaron App workflow demonstration.
+TARGET SKILL: {config['target_skill']['name']}
+TARGET SKILL CORE: {config['target_skill']['core']}
+UI LOCALE: {ui_locale}
+ATTACHED ROLES: image 1 is the authorized user input photo to show as the selected input thumbnail; the remaining images are supplied v5 Makaron iOS UI layout references for this locale. Treat reference screenshots as layout/style evidence, not as literal private device footage or skill-specific content.
+Create a 4.0-second, muted, 9:16 product walkthrough: start at the localized Makaron home top; smoothly scroll to the target Skill card; show one white/magenta concentric pulse on that card; hard-cut to its populated detail page with image 1 already selected; then show one white/magenta pulse on the localized Create control. Derive click positions from the final UI layout. Do not show a photo picker, gallery, upload confirmation, private notification, recorder controls, Control Center, crossfade residue, fake user data, narration, subtitles, or source audio.
+Keep the target Skill name readable and locale-correct. This is a synthetic UI demonstration and must not be represented as a genuine device recording. Target 1080x1920, minimum 720x1280, 30fps, H.264 MP4. Return one newly exported MP4 only."""
 
 
 def bgm_prompt(config: dict[str, Any]) -> str:
