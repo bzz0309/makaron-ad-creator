@@ -14,6 +14,7 @@ from makaron_ad_creator.adapter import (
     extract_json_object,
     extract_remotion_design,
     validate_ad_remotion_design,
+    validate_screen_demo_remotion_design,
 )
 from makaron_ad_creator.util import AdCreatorError
 
@@ -127,6 +128,14 @@ class AdapterTests(unittest.TestCase):
                         allow_remotion_fallback=False,
                     )
             fallback.assert_not_called()
+
+    def test_screen_demo_contract_accepts_four_second_vertical_design(self) -> None:
+        design = {
+            "width": 1080,
+            "height": 1920,
+            "animation": {"fps": 30, "durationInSeconds": 4},
+        }
+        validate_screen_demo_remotion_design(design)
 
     def test_extract_json_object_accepts_selected_locale_subset(self) -> None:
         response = {"result": {"text": '{"yue":["一","二","三","四","五"]}'}}

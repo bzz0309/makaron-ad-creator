@@ -58,6 +58,7 @@ class MakaronAdapter:
         require_generated_video: bool = False,
         require_generated_image: bool = False,
         allow_remotion_fallback: bool = True,
+        remotion_contract: str = "ad-final",
     ) -> dict[str, Any]:
         if require_generated_video and require_generated_image:
             raise AdCreatorError("A chat output cannot require both a generated video and generated image")
@@ -101,7 +102,7 @@ class MakaronAdapter:
                 downloadable = urls
             if not downloadable:
                 if require_generated_video and allow_remotion_fallback:
-                    fallback = self.render_remotion_fallback(node_id, raw, destination)
+                    fallback = self.render_remotion_fallback(node_id, raw, destination, contract=remotion_contract)
                     return {
                         "response_id": response_id,
                         "media_urls": urls,
@@ -121,25 +122,38 @@ class MakaronAdapter:
             download((matching or downloadable)[0], destination)
         return {"response_id": response_id, "media_urls": urls, "response": raw, "response_path": str(response_path)}
 
-    def render_remotion_fallback(self, node_id: str, response: Any, destination: Path) -> dict[str, Any]:
+    def render_remotion_fallback(
+        self,
+        node_id: str,
+        response: Any,
+        destination: Path,
+        *,
+        contract: str = "ad-final",
+    ) -> dict[str, Any]:
         design = extract_remotion_design(response)
         if not design:
             raise AdCreatorError(
                 f"Makaron returned no exported final MP4 or reusable Remotion design for {node_id}; "
                 "attached source videos are not final artifacts"
             )
-        validate_ad_remotion_design(design)
+        if contract == "ad-final":
+            validate_ad_remotion_design(design)
+        elif contract == "screen-demo":
+            validate_screen_demo_remotion_design(design)
+        else:
+            raise AdCreatorError(f"Unknown Remotion fallback contract: {contract}")
         design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
         write_json(design_path, design)
         script = Path(__file__).resolve().parents[1] / "remotion_fallback" / "render.mjs"
         if not script.is_file():
             raise AdCreatorError(f"Bundled Remotion fallback renderer is missing: {script}")
         node = require_binary("node")
-        run([node, str(script), str(design_path), str(destination)], timeout=3600)
+        run([node, str(script), str(design_path), str(destination), contract], timeout=3600)
         if not destination.is_file() or destination.stat().st_size == 0:
             raise AdCreatorError("Local Remotion fallback did not create a non-empty final MP4")
         return {
             "engine": "local-remotion-from-makaron-design",
+            "contract": contract,
             "design_path": str(design_path),
             "snapshot_id": design.get("snapshotId") or design.get("snapshot_id"),
         }
@@ -342,6 +356,21 @@ def validate_ad_remotion_design(design: dict[str, Any]) -> None:
     if not isinstance(props, dict):
         raise AdCreatorError("Remotion design is missing props")
     validate_timing_manifest(props)
+
+
+def validate_screen_demo_remotion_design(design: dict[str, Any]) -> None:
+    """Validate a bounded four-second Makaron screen-demo before local encoding."""
+    try:
+        width = int(design.get("width"))
+        height = int(design.get("height"))
+        fps = float(design.get("animation", {}).get("fps"))
+        duration = float(design.get("animation", {}).get("durationInSeconds"))
+    except (TypeError, ValueError) as exc:
+        raise AdCreatorError("Makaron screen-demo design has invalid dimensions or timing") from exc
+    if width < 720 or height < 1280 or abs(width / height - 9 / 16) > 0.01:
+        raise AdCreatorError("Makaron screen-demo design must be vertical 9:16 and at least 720x1280")
+    if fps != 30 or not 3.5 <= duration <= 4.5:
+        raise AdCreatorError("Makaron screen-demo design must be 30fps and 3.5-4.5 seconds")
 
 
 def validate_timing_manifest(props: dict[str, Any]) -> None:

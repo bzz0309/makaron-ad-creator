@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
+from .adapter import MakaronAdapter, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
 from .media import bgm_similarity_in_cta, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
 from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt, workflow_prompt
 from .schema import LOCALE_TO_UI, ad_locales, validate_config
@@ -334,21 +334,34 @@ class Pipeline:
         node_id = f"workflow-{ad_locale}"
         output = self.run_dir / "workflow" / f"workflow-{ad_locale}.mp4"
         images = [Path(self.config["input_image"]), *self._workflow_references(ad_locale)]
-        result = self._adapter().chat(
-            node_id=node_id,
-            prompt=workflow_prompt(self.config, ad_locale),
-            skill_id="screen-demo",
-            images=images,
-            destination=output,
-            require_generated_video=True,
-            allow_remotion_fallback=False,
-        )
+        adapter = self._adapter()
+        cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
+        cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
+        cached_design = extract_remotion_design(cached_response) if cached_response else None
+        if cached_design:
+            try:
+                validate_screen_demo_remotion_design(cached_design)
+            except AdCreatorError:
+                cached_design = None
+        if cached_design:
+            fallback = adapter.render_remotion_fallback(node_id, cached_response, output, contract="screen-demo")
+            result = {"response_id": cached_response.get("response_id"), "render_fallback": fallback}
+        else:
+            result = adapter.chat(
+                node_id=node_id,
+                prompt=workflow_prompt(self.config, ad_locale),
+                skill_id="screen-demo",
+                images=images,
+                destination=output,
+                require_generated_video=True,
+                remotion_contract="screen-demo",
+            )
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError("Makaron screen-demo workflow must be vertical 9:16 and at least 720x1280")
         if not 3.5 <= float(info["duration"]) <= 4.5:
             raise AdCreatorError("Makaron screen-demo workflow must be 3.5-4.5 seconds")
-        self.add_artifact(node_id, output, response_id=result.get("response_id"), source="makaron-screen-demo", ui_locale=LOCALE_TO_UI[ad_locale], resolution=f"{info['width']}x{info['height']}")
+        self.add_artifact(node_id, output, response_id=result.get("response_id"), source="makaron-screen-demo", ui_locale=LOCALE_TO_UI[ad_locale], resolution=f"{info['width']}x{info['height']}", render_fallback=result.get("render_fallback"))
 
     def _workflow_for(self, ad_locale: str) -> Path:
         return self.artifact(f"workflow-{ad_locale}", ".mp4")

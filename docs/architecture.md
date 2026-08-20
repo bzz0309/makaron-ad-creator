@@ -22,7 +22,7 @@ master Skill
 global makaron-ad Node launcher
     ↓ portable runtime + bundled dependencies
 Python orchestration core
-    ├── local: validate / QC / package
+    ├── local: validate / QC / package / encode unchanged Makaron Remotion design only when cloud export is forbidden
     ├── Makaron: script / Before / distinct target-Skill Hook + result / best source-frame After / comparison / localized screen-demo / final
     └── Agent protocol: request.json → artifact → complete → resume
 ```

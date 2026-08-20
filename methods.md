@@ -66,4 +66,4 @@ An After image should be an exact decoded frame from the effect result, but its 
 
 ## Require authoritative generated images as well as videos
 
-Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, accept only a newly generated `screen-demo` video and disable the final-ad local Remotion fallback because its contract and duration are different. This prevents an input attachment or final-ad renderer from silently satisfying the wrong node.
+Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, accept only a newly generated `screen-demo` video or a validated 3.5–4.5-second Makaron Remotion design; never feed that design into the 15–20-second final-ad contract. This prevents an input attachment or the wrong renderer contract from silently satisfying the node.
