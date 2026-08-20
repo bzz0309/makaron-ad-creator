@@ -452,6 +452,16 @@ def validate_timing_manifest(props: dict[str, Any]) -> None:
             raise AdCreatorError("Remotion caption timing must have endMs after startMs")
     scenes = props.get("scenes")
     required_scenes = ("hook", "comparison", "workflow", "result", "cta")
+    if isinstance(scenes, list):
+        normalized_scenes: dict[str, Any] = {}
+        for item in scenes:
+            scene_id = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if scene_id in normalized_scenes:
+                raise AdCreatorError(f"Remotion design contains duplicate scene timing: {scene_id}")
+            if scene_id:
+                normalized_scenes[scene_id] = {key: value for key, value in item.items() if key != "id"}
+        scenes = normalized_scenes
+        props["scenes"] = scenes
     if not isinstance(scenes, dict) or any(scene not in scenes for scene in required_scenes):
         raise AdCreatorError("Remotion design must contain all five scene timing ranges")
     for scene in required_scenes:
