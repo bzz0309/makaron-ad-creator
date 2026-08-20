@@ -34,6 +34,8 @@ npm whoami
 npm publish --access public
 ```
 
+Reuse a valid npm login from the user's npm config instead of prompting again. This maintainer authenticates with a WebAuthn security key, so use `npm login --auth-type=web`; do not send them to a six-digit OTP prompt. Prefer npm trusted publishing for routine future releases once it is configured. Never copy npm credentials into the repository, command history, release notes, or campaign state.
+
 Never commit npm tokens. After publication, verify from a clean directory:
 
 ```bash
