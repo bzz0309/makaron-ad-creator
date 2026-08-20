@@ -24,6 +24,7 @@ Maintain a resumable, one-image-to-selected-locale Makaron ad pipeline that can 
 - Run the complete suite with `npm test`, then verify package contents with `npm run pack:check`.
 - Validate the main Skill with the system `quick_validate.py` script.
 - Every release must preserve the prior npm version and Git tag/Release as an immutable rollback point. Move the npm `previous` dist-tag to the version being replaced before publishing a new `latest`, and include exact rollback commands in the GitHub release notes.
+- Reuse credentials that the user has already authorized. Makaron credentials belong in macOS Keychain; npm credentials belong in npm's user config or a trusted-publishing workflow. Never ask the user to re-enter an API key, password, OTP, or security key unless the stored authorization has been verified invalid and the external service requires a fresh interactive challenge. This npm account uses a WebAuthn security key, not a six-digit TOTP code.
 
 ## Test expectations
 
