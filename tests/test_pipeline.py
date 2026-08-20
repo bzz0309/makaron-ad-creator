@@ -11,7 +11,7 @@ from PIL import Image
 
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
-from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
+from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for, scripts_for_final
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
@@ -176,6 +176,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("including the Hook, effect video, workflow video, and Logo CTA", prompt)
         self.assertIn("Caption JSON objects", prompt)
         self.assertIn("within 150ms", prompt)
+        self.assertIn("never pause to ask the user a timing question", prompt)
         self.assertIn("older 140px", prompt)
         self.assertIn("y=270", prompt)
         self.assertIn("at most 20 visible characters", prompt)
@@ -242,7 +243,8 @@ class PipelineTests(unittest.TestCase):
         pipeline.add_artifact("workflow-en", workflow_en, source_url="https://cdn.example.com/workflow-en.mp4")
         node = next(item for item in pipeline.plan if item["id"] == "final-en")
         publisher = SimpleNamespace(publish_local_media=lambda path, role: "https://cdn.example.com/logo.mp4")
-        with patch.object(pipeline, "_adapter", return_value=publisher):
+        with patch.object(pipeline, "_adapter", return_value=publisher), \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value={"duration": 2.5}):
             pipeline._write_agent_request(node)
 
         request = read_json(path.parent / "run" / "requests" / "final-en.json")
@@ -387,6 +389,12 @@ class PipelineTests(unittest.TestCase):
 
     def test_payload_too_large_is_not_retried(self) -> None:
         self.assertTrue(is_non_retryable_error(AdCreatorError("Error 413: Request Entity Too Large")))
+
+    def test_short_hook_uses_compact_locale_voiceover(self) -> None:
+        scripts = {"en": ["One photo—then, crystal ballet.", "two", "three", "four", "five"]}
+        prepared = scripts_for_final(scripts, "en", hook_duration=2.041667)
+        self.assertEqual(prepared["en"][0], "Crystal Ballet.")
+        self.assertEqual(scripts["en"][0], "One photo—then, crystal ballet.")
 
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()
