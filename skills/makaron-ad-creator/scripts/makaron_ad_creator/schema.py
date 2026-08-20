@@ -8,8 +8,10 @@ from .util import AdCreatorError, resolve_path
 
 LOCALE_TO_UI = {"en": "en", "ja": "ja", "yue": "zh-Hant"}
 DEFAULT_AD_LOCALES = ("en", "ja", "yue")
-DEFAULT_LOGO_CTA = Path(__file__).resolve().parents[2] / "assets" / "makaron-logo-cta.mp4"
-BUNDLED_LOGO_CTA_URI = "bundled://makaron-logo-cta.mp4"
+DEFAULT_LOGO_CTA_MASTER = Path(__file__).resolve().parents[2] / "assets" / "makaron-logo-cta.mp4"
+DEFAULT_LOGO_CTA = Path(__file__).resolve().parents[2] / "assets" / "makaron-logo-cta-3s.mp4"
+BUNDLED_LOGO_CTA_URI = "bundled://makaron-logo-cta-3s.mp4"
+BUNDLED_LOGO_CTA_MASTER_URI = "bundled://makaron-logo-cta.mp4"
 DEFAULT_LOGO_CTA_EXCERPT_SECONDS = 3.0
 DEFAULT_LOGO_CTA_START_SECONDS = 0.0
 DEFAULT_LOCALES = [
@@ -137,7 +139,12 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
     assets = config.setdefault("assets", {})
     if not assets.get("logo_cta"):
         assets["logo_cta"] = BUNDLED_LOGO_CTA_URI
-    logo = DEFAULT_LOGO_CTA if assets["logo_cta"] == BUNDLED_LOGO_CTA_URI else resolve_path(base, assets["logo_cta"])
+    if assets["logo_cta"] == BUNDLED_LOGO_CTA_URI:
+        logo = DEFAULT_LOGO_CTA
+    elif assets["logo_cta"] == BUNDLED_LOGO_CTA_MASTER_URI:
+        logo = DEFAULT_LOGO_CTA_MASTER
+    else:
+        logo = resolve_path(base, assets["logo_cta"])
     if not logo.is_file():
         errors.append(f"assets.logo_cta not found: {logo}")
     assets["logo_cta"] = str(logo)

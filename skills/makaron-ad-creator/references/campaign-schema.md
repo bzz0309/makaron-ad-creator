@@ -19,7 +19,7 @@
 - `audio.bgm_volume`: Remotion relative mix volume under TTS, default `0.22` and maximum `0.5`.
 - `audio.mute_source_audio`: forced to `true`.
 - `audio.cta_source_audio`: forced to `false`.
-- `assets.logo_cta`: defaults to portable URI `bundled://makaron-logo-cta.mp4`, resolved to the fixed source inside the currently installed CLI; an explicit path overrides it.
+- `assets.logo_cta`: defaults to portable URI `bundled://makaron-logo-cta-3s.mp4`, the upload-safe silent excerpt inside the installed CLI. Legacy `bundled://makaron-logo-cta.mp4` remains accepted and maps to the same excerpt for final transport; an explicit custom path overrides it.
 - `assets.logo_cta_start_seconds`: deterministic excerpt start, default `0`, matching the supplied finished-ad references.
 - `assets.logo_cta_excerpt_seconds`: final CTA excerpt duration from `2` through `3`, default `3`.
 - `output.minimum_duration_seconds`: final minimum, default `15`.

@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
+from .adapter import MakaronAdapter, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_screen_demo_remotion_design, validate_timing_manifest
 from .media import bgm_similarity_in_cta, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
 from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, hook_prompt, script_prompt, workflow_prompt
-from .schema import LOCALE_TO_UI, ad_locales, validate_config
+from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
 from .util import AdCreatorError, read_json, sha256, write_json
 
 
@@ -240,7 +240,7 @@ class Pipeline:
             destination=output,
             require_generated_image=True,
         )
-        self.add_artifact("before", output, response_id=result.get("response_id"))
+        self.add_artifact("before", output, response_id=result.get("response_id"), source_url=result.get("source_url"))
 
     def _generate_effect(self, attempt: int) -> None:
         output = self.run_dir / "assets" / "effect.mp4"
@@ -300,7 +300,7 @@ class Pipeline:
         info = probe_image(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError("Makaron After keyframe must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("after", output, response_id=result.get("response_id"), source="makaron-exact-effect-keyframe", resolution=f"{info['width']}x{info['height']}")
+        self.add_artifact("after", output, response_id=result.get("response_id"), source_url=result.get("source_url"), source="makaron-exact-effect-keyframe", resolution=f"{info['width']}x{info['height']}")
 
     def _generate_comparison(self) -> None:
         output = self.run_dir / "assets" / "comparison.png"
@@ -314,7 +314,7 @@ class Pipeline:
         info = probe_image(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError("Makaron comparison must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("comparison", output, response_id=result.get("response_id"), source="makaron-composition", resolution=f"{info['width']}x{info['height']}")
+        self.add_artifact("comparison", output, response_id=result.get("response_id"), source_url=result.get("source_url"), source="makaron-composition", resolution=f"{info['width']}x{info['height']}")
 
     def _workflow_references(self, ad_locale: str) -> list[Path]:
         main_skill_dir = Path(__file__).resolve().parents[2]
@@ -392,8 +392,31 @@ class Pipeline:
             self._final_video_input("hook", self.artifact("hook", ".mp4"), role="hook"),
             self._final_video_input("effect", self.artifact("effect", ".mp4"), role="effect"),
             self._final_video_input(f"workflow-{locale}", self._workflow_for(locale), role=f"workflow-{locale}"),
-            self._final_video_input("logo-cta", Path(self.config["assets"]["logo_cta"]), role="logo-cta"),
+            self._final_video_input("logo-cta", self._cta_input_path(), role="logo-cta"),
         ]
+
+    def _cta_input_path(self) -> Path:
+        configured = Path(self.config["assets"]["logo_cta"]).resolve()
+        if (
+            configured == DEFAULT_LOGO_CTA_MASTER.resolve()
+            and float(self.config["assets"]["logo_cta_start_seconds"]) == 0.0
+            and float(self.config["assets"]["logo_cta_excerpt_seconds"]) == 3.0
+        ):
+            return DEFAULT_LOGO_CTA.resolve()
+        return configured
+
+    def _final_image_input(self, node_id: str, path: Path, *, role: str) -> str:
+        items = self.state["nodes"][node_id].get("artifacts", [])
+        if items:
+            source_url = str(items[0].get("source_url") or "")
+            if source_url.startswith(("https://", "http://")):
+                return source_url
+        response_path = self.run_dir / "responses" / f"{node_id}.json"
+        if response_path.is_file():
+            generated_urls = extract_generated_image_urls(read_json(response_path))
+            if generated_urls:
+                return generated_urls[0]
+        return self._adapter().publish_local_media(path, role=role)
 
     def _generate_final(self, locale: str, attempt: int) -> None:
         scripts = read_json(self.artifact("scripts"))
@@ -423,7 +446,7 @@ class Pipeline:
                 node_id=node_id,
                 prompt=final_prompt(self.config, locale, scripts, MODELS[min(attempt - 1, len(MODELS) - 1)]),
                 skill_id=self.config.get("automation", {}).get("builder_skill_id") or None,
-                images=[self.artifact("comparison")],
+                images=[self._final_image_input("comparison", self.artifact("comparison"), role="comparison")],
                 videos=videos,
                 audios=[self._bgm_input()],
                 destination=output,
@@ -551,8 +574,9 @@ class Pipeline:
             "project_id": self.config["project_binding"]["project_id"],
             "input": {"path": self.config["input_image"], "sha256": sha256(Path(self.config["input_image"]))},
             "fixed_logo_cta": {
-                "path": self.config["assets"]["logo_cta"],
-                "sha256": sha256(Path(self.config["assets"]["logo_cta"])),
+                "path": str(self._cta_input_path()),
+                "master_path": self.config["assets"]["logo_cta"],
+                "sha256": sha256(self._cta_input_path()),
                 "start_seconds": self.config["assets"]["logo_cta_start_seconds"],
                 "excerpt_seconds": self.config["assets"]["logo_cta_excerpt_seconds"],
                 "source_audio_used": False,
@@ -676,7 +700,7 @@ class Pipeline:
                 "operation": "assemble_localized_ad",
                 "locale": locale,
                 "prompt": final_prompt(self.config, locale, scripts, model_preference),
-                "images": [str(self.artifact("comparison"))],
+                "images": [self._final_image_input("comparison", self.artifact("comparison"), role="comparison")],
                 "videos": videos,
                 "audios": [self._bgm_input()],
                 "input_roles": {

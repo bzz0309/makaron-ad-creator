@@ -13,7 +13,7 @@ from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, plan_for
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, final_prompt, hook_prompt, workflow_prompt
-from makaron_ad_creator.schema import DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
+from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
 
@@ -134,6 +134,16 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["output"]["safe_zone"]["top_px"], 250)
         self.assertEqual(config["output"]["safe_zone"]["bottom_px"], 340)
         self.assertEqual(config["automation"]["builder_skill_id"], "tiktok-video")
+        self.assertLess(DEFAULT_LOGO_CTA.stat().st_size, 1_000_000)
+        self.assertGreater(DEFAULT_LOGO_CTA_MASTER.stat().st_size, DEFAULT_LOGO_CTA.stat().st_size)
+
+    def test_legacy_full_cta_uri_resolves_to_upload_safe_excerpt_for_final(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["assets"]["logo_cta"] = BUNDLED_LOGO_CTA_MASTER_URI
+        write_json(path, config)
+        pipeline = Pipeline(path, executor="agent")
+        self.assertEqual(pipeline._cta_input_path(), DEFAULT_LOGO_CTA.resolve())
 
     def test_final_prompt_locks_body_and_young_female_tts(self) -> None:
         path = self.make_campaign()
@@ -213,7 +223,7 @@ class PipelineTests(unittest.TestCase):
         workflow_en.write_bytes(b"workflow")
 
         pipeline.add_artifact("scripts", scripts)
-        pipeline.add_artifact("comparison", comparison)
+        pipeline.add_artifact("comparison", comparison, source_url="https://cdn.example.com/comparison.png")
         pipeline.add_artifact("hook", hook, source_url="https://cdn.example.com/hook.mp4")
         pipeline.add_artifact("effect", effect, source_url="https://cdn.example.com/effect.mp4")
         pipeline.add_artifact("bgm", bgm, source_url="https://cdn.example.com/bgm.mp3")
@@ -242,6 +252,7 @@ class PipelineTests(unittest.TestCase):
             "https://cdn.example.com/workflow-en.mp4",
             "https://cdn.example.com/logo.mp4",
         ])
+        self.assertEqual(request["images"], ["https://cdn.example.com/comparison.png"])
 
     def test_makaron_asset_requests_are_explicit_and_locale_scoped(self) -> None:
         path = self.make_campaign()

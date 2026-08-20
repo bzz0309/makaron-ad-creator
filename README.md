@@ -49,11 +49,11 @@ makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 
 CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、最多两行、每行最多 20 个可见字符。Meta Reels 默认预留顶部 250px、底部 340px、左侧 90px、右侧 180px，字幕从 y=270 起；旧的距顶 140px 不用于 Meta，因为会被平台 UI 遮挡。
 
-Final 节点不会再把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。Hook、Effect 和 BGM 优先复用原始 Makaron CDN URL；本地编码的 workflow 与固定 CTA 通过 `makaron admin upload` 后以 CDN URL 引用，并按 SHA-256 缓存，断点续跑不会重复上传。comparison 图片仍可走内置 base64 图片通道。这避免受限 Agent 网络到 Cloudflare/Supabase 时出现 `ENETUNREACH` 或 `ETIMEDOUT`。
+Final 节点不会再把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。Hook、Effect、BGM 和 Makaron 对比图优先复用原始 CDN URL；本地编码的 workflow 与固定 3 秒 CTA 片段通过 `makaron admin upload` 后以 CDN URL 引用，并按 SHA-256 缓存，断点续跑不会重复上传。这同时避免受限 Agent 网络到 Cloudflare/Supabase 的 `ENETUNREACH`/`ETIMEDOUT`，以及大图 base64 导致的 `413 Request Entity Too Large`。
 
 CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。如果 Makaron 已生成的 Remotion design 因平台 `Forbidden` 无法 materialize，CLI 只会接受满足同步字幕/场景边界 contract v2 的 design，再用固定版本 Remotion 在本机渲染同一份 design；不会误把上传的 CTA/素材附件当成最终视频。
 
-随 npm 包内置完整 Makaron Logo 动画源片，Campaign 使用可跨电脑解析的 `bundled://makaron-logo-cta.mp4`，所以其他 Agent 在新电脑执行一次 `setup` 后也会拥有同一份 CTA 资源，不依赖这台电脑的 Desktop 路径。Remotion 最终节点读取固定 CTA 源片的配置片段，不让模型重画 Logo。
+随 npm 包同时内置完整 10 秒 Makaron Logo 动画母版和同源的 3 秒无声投放片段。新 Campaign 使用可跨电脑解析的 `bundled://makaron-logo-cta-3s.mp4`；旧 `bundled://makaron-logo-cta.mp4` 配置仍兼容，并在 final 传输时自动改用同源 3 秒片段。它只有约 207 KB，可通过后端上传限制；其他 Agent 不依赖这台电脑的 Desktop 路径，也不会让模型重画 Logo。
 
 提交图片即表示图片拥有投放素材制作所需的授权、真人为已授权成年人，且不会用生成结果支持虚假 Claim。这不代表授权自动发布广告。
 
@@ -73,7 +73,7 @@ makaron-ad doctor
 - App UI mapping is fixed: English uses English, Japanese uses Japanese, and Cantonese uses Traditional Chinese.
 - Final structure is fixed to a separately generated Hook video → comparison image → workflow video → separately generated effect/result video → bundled Logo CTA; one project-bound Makaron chat drives the built-in `tiktok-video` Remotion runtime for measured Seed Audio captions, Meta-safe placement, CTA, and the final mix.
 - Final duration adapts from 15–20 seconds; the shared timing bounds were calibrated from supplied English, Japanese, and Cantonese finished ads rather than forcing every Skill to 18 seconds.
-- The complete 10-second Logo CTA source is bundled for portability; Remotion uses only the configured continuous 2–3 second excerpt, mutes its source audio, and keeps the campaign BGM playing through it.
+- The complete 10-second Logo CTA master and a same-source silent 3-second delivery excerpt are bundled for portability. Final transport uses the small excerpt, preserving legacy campaign compatibility, and keeps the campaign BGM playing through it.
 - One instrumental BGM is generated per campaign with `makaron music create`, reused for every selected locale, and mixed at relative volume `0.22` from frame zero through the final CTA frame.
 - A Skill is bound to one persistent Makaron project per Agent scope. `--project auto` is rejected.
 - No per-asset approval is required after rights, claims, project binding, and offer are configured. Failed nodes retry independently.
