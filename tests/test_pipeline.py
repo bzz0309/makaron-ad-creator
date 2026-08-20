@@ -11,7 +11,7 @@ from PIL import Image
 
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
-from makaron_ad_creator.pipeline import Pipeline, plan_for
+from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, plan_for
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
@@ -333,6 +333,25 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(hook_meta["source"], "exact-non-overlapping-effect-segment")
         self.assertEqual(result_meta["source"], "exact-non-overlapping-effect-segment")
+
+    def test_cached_final_design_rejected_when_effect_segment_lengths_changed(self) -> None:
+        manifest = read_json(self.make_timing_manifest())
+        design = {"props": manifest, "code": "", "animation": {}}
+        self.assertTrue(cached_final_design_matches_effect_segments(
+            design,
+            hook_duration=2.5,
+            result_duration=6.0,
+        ))
+
+        stale_manifest = read_json(self.make_timing_manifest())
+        stale_manifest["scenes"]["hook"] = {"startMs": 0, "endMs": 3550}
+        stale_manifest["scenes"]["result"] = {"startMs": 9000, "endMs": 14270}
+        stale_design = {"props": stale_manifest, "code": "", "animation": {}}
+        self.assertFalse(cached_final_design_matches_effect_segments(
+            stale_design,
+            hook_duration=2.041667,
+            result_duration=3.0,
+        ))
 
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()

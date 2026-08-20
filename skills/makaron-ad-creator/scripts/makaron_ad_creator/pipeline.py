@@ -17,6 +17,27 @@ from .util import AdCreatorError, read_json, run as run_command, sha256, write_j
 MODELS = ["seedance-2-0", "kling", "grok"]
 
 
+def cached_final_design_matches_effect_segments(
+    design: dict[str, Any],
+    *,
+    hook_duration: float,
+    result_duration: float,
+    tolerance_seconds: float = 0.25,
+) -> bool:
+    """Only reuse a Remotion design when its effect scenes fit the current clips."""
+    validate_ad_remotion_design(design)
+    scenes = design["props"]["scenes"]
+
+    def scene_duration(scene_id: str) -> float:
+        timing = scenes[scene_id]
+        return (float(timing["endMs"]) - float(timing["startMs"])) / 1000.0
+
+    return (
+        abs(scene_duration("hook") - hook_duration) <= tolerance_seconds
+        and scene_duration("result") <= result_duration + tolerance_seconds
+    )
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -457,8 +478,11 @@ class Pipeline:
                     videos=videos,
                     bgm_url=bgm_input,
                 )
-                validate_ad_remotion_design(cached_design)
-                cached_contract_valid = True
+                cached_contract_valid = cached_final_design_matches_effect_segments(
+                    cached_design,
+                    hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
+                    result_duration=float(probe_video(self.artifact("result", ".mp4"))["duration"]),
+                )
             except AdCreatorError:
                 cached_contract_valid = False
         if cached_contract_valid:
