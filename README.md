@@ -15,6 +15,8 @@ makaron-ad login
 
 `setup` 会一次完成：安装全局 `makaron-ad` 命令、安装 Makaron CLI 与 FFmpeg/FFprobe 运行依赖、建立私有 Python/Pillow 环境，并把唯一入口 Skill `makaron-ad-creator` 安装到当前 Agent。无需手工复制本仓库，也无需把五个子 Skill 分别装一遍。
 
+如果系统 npm 全局目录不可写并返回 `EACCES`/`EPERM`，`setup` 会自动回退到 CLI 自己的用户级 prefix，并在可写的用户 bin 创建命令；只有该目录尚未进入 PATH 时才会返回 PATH 提示，不要求默认使用 `sudo npm install`。
+
 `makaron-ad login` 只需执行一次：CLI 会先校验 API key，再保存进当前 Mac 用户的系统钥匙串。此后用户和其他 Agent 执行 `create`、`run`、`credits` 时会自动读取，不会反复询问，也不会把 key 写进项目、配置 JSON、日志或 Git。需要更换账号时运行 `makaron-ad logout`，再重新 `makaron-ad login`。
 
 ## 唯一公开用法
@@ -49,7 +51,7 @@ makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 
 CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、最多两行、每行最多 20 个可见字符。Meta Reels 默认预留顶部 250px、底部 340px、左侧 90px、右侧 180px，字幕从 y=270 起；旧的距顶 140px 不用于 Meta，因为会被平台 UI 遮挡。
 
-Final 节点不会把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。Effect 衍生的 Hook/Result、v5 workflow 与固定 3 秒 CTA 片段通过 `makaron admin upload` 后以 CDN URL 引用，并按 SHA-256 缓存；BGM 和 Makaron 对比图优先复用原始 CDN URL。这同时避免受限 Agent 网络到 Cloudflare/Supabase 的 `ENETUNREACH`/`ETIMEDOUT`，以及大图 base64 导致的 `413 Request Entity Too Large`。
+Final 节点不会把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。原生 1080×1920 的权威 source URL 会直接复用；Effect 衍生的 Hook/Result、v5 workflow 与固定 CTA 若来自本地或低分辨率，会先用自适应 CRF 规范为 1080×1920 的上传代理，再通过 `makaron admin upload` 以 CDN URL 引用并按 SHA-256 缓存。它不再为了 4 MiB 限制把全部素材固定降成 720×1280。BGM 和 Makaron 对比图优先复用原始 CDN URL。
 
 CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。如果 Makaron 已生成的 Remotion design 因平台 `Forbidden` 无法 materialize，CLI 只会接受满足同步字幕/场景边界 contract v2 的 design，再用固定版本 Remotion 在本机渲染同一份 design；不会误把上传的 CTA/素材附件当成最终视频。
 
@@ -57,7 +59,7 @@ CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字
 
 提交图片即表示图片拥有投放素材制作所需的授权、真人为已授权成年人，且不会用生成结果支持虚假 Claim。这不代表授权自动发布广告。
 
-内部仍保留 `run/status/retry/complete` 等恢复命令供 Agent 自动处理故障，但最终用户无需填写这些参数。运行状态默认保存在 `~/.makaron-ad-creator/workspace/`，可以中断后继续。
+内部仍保留 `run/status/retry/complete` 等恢复命令供 Agent 自动处理故障，但最终用户无需填写这些参数。`run/status` 接受 Campaign ID、Campaign 目录或完整 `campaign.json` 路径。运行状态默认保存在 `~/.makaron-ad-creator/workspace/`；进程异常中断留下的孤儿 `RUNNING` 节点会在下次 `run` 时回到 `PENDING`，不消耗一次虚假重试，也不会重做已 PASS 节点。
 
 检查当前电脑是否安装完整：
 
@@ -88,8 +90,8 @@ make IMAGE SKILL_NAME          与上方二参数入口等价
 doctor                         check Python/Pillow/FFmpeg/Makaron/runtime assets
 init                           write campaign.json and plan.json
 plan <campaign.json>           inspect deterministic DAG
-run <campaign.json>            execute or resume
-status <campaign.json>         inspect state and lineage
+run <id|dir|campaign.json>     execute or resume
+status <id|dir|campaign.json>  inspect state and lineage
 complete ...                   attach another Agent's artifact; final-* also requires the Remotion timing-manifest JSON
 fail ...                       report a failed Agent request and use the next retry
 retry --node <id>              reset one node and downstream dependents

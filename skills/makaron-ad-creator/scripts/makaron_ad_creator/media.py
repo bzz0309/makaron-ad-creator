@@ -74,13 +74,15 @@ def extract_video_segment(video: Path, output: Path, *, start_seconds: float, du
     return output
 
 
-def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
+def _contain(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     target_w, target_h = size
-    scale = max(target_w / image.width, target_h / image.height)
+    scale = min(target_w / image.width, target_h / image.height)
     resized = image.resize((round(image.width * scale), round(image.height * scale)), Image.Resampling.LANCZOS)
-    left = max(0, (resized.width - target_w) // 2)
-    top = max(0, (resized.height - target_h) // 2)
-    return resized.crop((left, top, left + target_w, top + target_h))
+    panel = Image.new("RGB", (target_w, target_h), "black")
+    left = (target_w - resized.width) // 2
+    top = (target_h - resized.height) // 2
+    panel.paste(resized, (left, top))
+    return panel
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -103,7 +105,7 @@ def compose_comparison(before: Path, after: Path, output: Path, width: int = 108
     top = (height - panel_h) // 2 - 50
     for index, source in enumerate((before, after)):
         with Image.open(source) as raw:
-            panel = _cover(raw.convert("RGB"), (panel_w, panel_h))
+            panel = _contain(raw.convert("RGB"), (panel_w, panel_h))
         x = 0 if index == 0 else panel_w + gap
         canvas.paste(panel, (x, top))
     draw = ImageDraw.Draw(canvas)

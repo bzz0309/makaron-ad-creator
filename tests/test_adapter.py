@@ -173,6 +173,41 @@ class AdapterTests(unittest.TestCase):
         self.assertIsInstance(design["props"]["scenes"], dict)
         self.assertEqual(design["props"]["scenes"]["result"]["startMs"], 9000)
 
+    def test_remotion_contract_accepts_proportional_safe_zone_at_720p(self) -> None:
+        scenes = {
+            "hook": {"startMs": 0, "endMs": 2500},
+            "comparison": {"startMs": 2500, "endMs": 5000},
+            "workflow": {"startMs": 5000, "endMs": 9000},
+            "result": {"startMs": 9000, "endMs": 15000},
+            "cta": {"startMs": 15000, "endMs": 18000},
+        }
+        captions = [
+            {"text": str(index), "startMs": start, "endMs": end, "timestampMs": start, "confidence": 1}
+            for index, (start, end) in enumerate(((100, 2000), (2700, 4700), (5100, 6500), (6600, 8500), (9200, 14000)))
+        ]
+        design = {
+            "props": {
+                "compositionContractVersion": 2,
+                "safeZone": {
+                    "topRatio": 250 / 1920,
+                    "bottomRatio": 340 / 1920,
+                    "leftRatio": 90 / 1080,
+                    "rightRatio": 180 / 1080,
+                    "captionTopRatio": 270 / 1920,
+                    "topPx": 167,
+                    "bottomPx": 227,
+                    "leftPx": 60,
+                    "rightPx": 120,
+                    "captionTopPx": 180,
+                    "maxCharactersPerLine": 20,
+                },
+                "captions": captions,
+                "scenes": scenes,
+                "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
+            }
+        }
+        validate_ad_remotion_design(design)
+
     def test_final_chat_rejects_source_video_when_export_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

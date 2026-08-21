@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +16,7 @@ from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_
 from .util import AdCreatorError, read_json, run as run_command, sha256, write_json
 
 
-MODELS = ["seedance-2-0", "seedance-fast", "grok"]
+MODELS = ["seedance-2-0", "kling", "grok"]
 MAX_MAKARON_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
@@ -139,40 +141,70 @@ class Pipeline:
     def ready(self, node: dict[str, Any]) -> bool:
         return all(self.state["nodes"][dep]["status"] == "PASS" for dep in node["depends_on"])
 
+    def _recover_orphaned_running(self) -> None:
+        """Return nodes left RUNNING by an interrupted process to a resumable state."""
+        runner = self.state.get("runner") if isinstance(self.state.get("runner"), dict) else {}
+        runner_pid = int(runner.get("pid") or 0)
+        same_host = runner.get("host") == socket.gethostname()
+        runner_alive = False
+        if runner_pid > 0 and same_host:
+            try:
+                os.kill(runner_pid, 0)
+                runner_alive = True
+            except ProcessLookupError:
+                runner_alive = False
+            except PermissionError:
+                runner_alive = True
+        if self.state.get("status") == "RUNNING" and runner_alive and runner_pid != os.getpid():
+            raise AdCreatorError(f"Campaign is already running in process {runner_pid}")
+
+        recovered: list[str] = []
+        for node_id, node_state in self.state["nodes"].items():
+            if node_state.get("status") != "RUNNING":
+                continue
+            node_state["status"] = "PENDING"
+            node_state["attempts"] = max(0, int(node_state.get("attempts", 0)) - 1)
+            node_state["recovered_at"] = now()
+            node_state["recovery_reason"] = "previous runner exited before recording node completion"
+            recovered.append(node_id)
+        if recovered or self.state.get("status") == "RUNNING":
+            self.state["status"] = "PENDING"
+            self.state.pop("runner", None)
+            self.state.setdefault("recoveries", []).append({"at": now(), "nodes": recovered})
+            self.save()
+
+    def _finish_run(self, status: str) -> str:
+        self.state["status"] = status
+        self.state.pop("runner", None)
+        self.save()
+        return status
+
     def run(self) -> str:
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._recover_orphaned_running()
         self.state["status"] = "RUNNING"
+        self.state["runner"] = {"pid": os.getpid(), "host": socket.gethostname(), "started_at": now()}
         self.save()
         while True:
             pending = [node for node in self.plan if self.state["nodes"][node["id"]]["status"] != "PASS"]
             if not pending:
-                self.state["status"] = "PASS"
-                self.save()
-                return "PASS"
+                return self._finish_run("PASS")
             progressed = False
             for node in pending:
                 node_state = self.state["nodes"][node["id"]]
                 if node_state["status"] == "WAITING_FOR_AGENT":
-                    self.state["status"] = "WAITING_FOR_AGENT"
-                    self.save()
-                    return "WAITING_FOR_AGENT"
+                    return self._finish_run("WAITING_FOR_AGENT")
                 if node_state["status"] == "BLOCKED":
-                    self.state["status"] = "BLOCKED"
-                    self.save()
-                    return "BLOCKED"
+                    return self._finish_run("BLOCKED")
                 if not self.ready(node):
                     continue
                 if self.executor == "agent" and node["kind"].startswith("generate_"):
                     self._write_agent_request(node)
-                    self.state["status"] = "WAITING_FOR_AGENT"
-                    self.save()
-                    return "WAITING_FOR_AGENT"
+                    return self._finish_run("WAITING_FOR_AGENT")
                 self._execute_with_budget(node)
                 progressed = True
                 if self.state["nodes"][node["id"]]["status"] == "BLOCKED":
-                    self.state["status"] = "BLOCKED"
-                    self.save()
-                    return "BLOCKED"
+                    return self._finish_run("BLOCKED")
             if not progressed:
                 raise AdCreatorError("Pipeline cannot progress; inspect state.json dependencies")
 
@@ -432,11 +464,15 @@ class Pipeline:
         return str(self.artifact("bgm"))
 
     def _final_video_input(self, node_id: str, path: Path, *, role: str) -> str:
+        info = probe_video(path)
+        target_width = int(self.config["output"]["width"])
+        target_height = int(self.config["output"]["height"])
+        target_sized = int(info["width"]) == target_width and int(info["height"]) == target_height
         if node_id in self.state["nodes"]:
             items = self.state["nodes"][node_id].get("artifacts", [])
             if items:
                 source_url = str(items[0].get("source_url") or "")
-                if source_url.startswith(("https://", "http://")):
+                if source_url.startswith(("https://", "http://")) and target_sized:
                     return source_url
                 if items[0].get("source") == "exact-non-overlapping-effect-segment":
                     return self._adapter().publish_local_media(self._upload_safe_video(path, role), role=role)
@@ -448,25 +484,32 @@ class Pipeline:
         return self._adapter().publish_local_media(self._upload_safe_video(path, role), role=role)
 
     def _upload_safe_video(self, path: Path, role: str) -> Path:
-        """Create a 720p transport copy when Makaron's upload endpoint would reject the source."""
-        if path.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES:
+        """Create a dimension-stable 1080p transport copy within Makaron's upload limit."""
+        target_width = int(self.config["output"]["width"])
+        target_height = int(self.config["output"]["height"])
+        source_info = probe_video(path)
+        if (
+            path.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES
+            and int(source_info["width"]) == target_width
+            and int(source_info["height"]) == target_height
+        ):
             return path
-        output = self.run_dir / "uploads" / f"{role}-720p.mp4"
+        output = self.run_dir / "uploads" / f"{role}-1080p.mp4"
         output.parent.mkdir(parents=True, exist_ok=True)
-        command = [
-            "ffmpeg", "-y", "-i", str(path),
-            "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
-            "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1800k",
-            "-maxrate", "2200k", "-bufsize", "4400k", "-pix_fmt", "yuv420p",
-            "-an", "-movflags", "+faststart", str(output),
-        ]
-        run_command(command)
-        info = probe_video(output)
-        if int(info["width"]) != 720 or int(info["height"]) != 1280:
-            raise AdCreatorError(f"Upload-safe {role} video must be 720x1280")
-        if output.stat().st_size > MAX_MAKARON_UPLOAD_BYTES:
-            raise AdCreatorError(f"Upload-safe {role} video still exceeds Makaron's 4 MiB request limit")
-        return output
+        for crf in (22, 26, 30, 34, 38):
+            command = [
+                "ffmpeg", "-y", "-i", str(path),
+                "-vf", f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black",
+                "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+                "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", str(output),
+            ]
+            run_command(command)
+            info = probe_video(output)
+            if int(info["width"]) != target_width or int(info["height"]) != target_height:
+                raise AdCreatorError(f"Upload-safe {role} video must be {target_width}x{target_height}")
+            if output.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES:
+                return output
+        raise AdCreatorError(f"Upload-safe {role} video still exceeds Makaron's 4 MiB request limit at 1080p")
 
     def _final_video_inputs(self, locale: str) -> list[str]:
         return [
@@ -832,6 +875,10 @@ class Pipeline:
                 "composition": {
                     "engine": "makaron-agent-remotion",
                     "builder_skill_id": self.config.get("automation", {}).get("builder_skill_id", "tiktok-video"),
+                    "width": self.config["output"]["width"],
+                    "height": self.config["output"]["height"],
+                    "fps": 30,
+                    "dimensions_must_not_follow_source_media": True,
                     "one_project_bound_chat": True,
                     "tts_engine": "seed-audio",
                     "caption_format": "remotion-caption-json",

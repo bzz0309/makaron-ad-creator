@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 const PACKAGE = 'makaron-ad-creator-cli';
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MAIN_SKILL = path.join(PACKAGE_ROOT, 'skills', 'makaron-ad-creator');
@@ -16,6 +16,7 @@ const APP_HOME = path.resolve(process.env.MAKARON_AD_HOME || path.join(os.homedi
 const CONFIG_FILE = path.join(APP_HOME, 'config.json');
 const VENV_DIR = path.join(APP_HOME, 'venv');
 const WORKSPACE_DIR = path.join(APP_HOME, 'workspace');
+const USER_NPM_PREFIX = path.join(APP_HOME, 'npm-global');
 const KEYCHAIN_SERVICE = 'makaron-ad-creator-cli';
 const KEYCHAIN_ACCOUNT = 'default';
 const require = createRequire(import.meta.url);
@@ -205,6 +206,56 @@ function run(command, args, options = {}) {
   return result;
 }
 
+function writableUserBin() {
+  const pathEntries = String(process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const fallback = path.join(APP_HOME, 'bin');
+  fs.mkdirSync(fallback, {recursive: true});
+  return {directory: fallback, already_on_path: pathEntries.map((entry) => path.resolve(entry)).includes(fallback)};
+}
+
+function linkUserCommands(prefix) {
+  const selected = writableUserBin();
+  const links = [];
+  for (const name of ['makaron-ad', 'makaron-ad-creator-cli']) {
+    const source = path.join(prefix, 'bin', name);
+    if (!fs.existsSync(source)) fail('USER_INSTALL_INVALID', `npm user-prefix install did not create ${source}`);
+    const destination = path.join(selected.directory, name);
+    try { fs.rmSync(destination, {force: true}); } catch { /* Ignore an absent link. */ }
+    fs.symlinkSync(source, destination);
+    links.push(destination);
+  }
+  return {
+    bin: selected.directory,
+    commands: links,
+    path_configured: selected.already_on_path,
+    path_hint: selected.already_on_path ? null : `Add this directory to PATH: ${selected.directory}`,
+  };
+}
+
+function installGlobalCli() {
+  const args = ['install', '-g', `${PACKAGE}@${VERSION}`];
+  const result = spawnSync('npm', args, {cwd: PACKAGE_ROOT, env: process.env, encoding: 'utf8', timeout: 10 * 60 * 1000});
+  if (result.error) fail('COMMAND_START_FAILED', `npm: ${result.error.message}`, true);
+  if (result.status === 0) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    return {mode: 'global', command: ['npm', ...args]};
+  }
+  const detail = String(result.stderr || result.stdout || '').trim();
+  if (!/(?:EACCES|EPERM|permission denied)/i.test(detail)) {
+    fail('COMMAND_FAILED', `npm exited with ${result.status}${detail ? `: ${detail.slice(-4000)}` : ''}`, true, {exit_code: result.status});
+  }
+  fs.mkdirSync(USER_NPM_PREFIX, {recursive: true});
+  run('npm', [...args, '--prefix', USER_NPM_PREFIX], {inherit: true, timeout: 10 * 60 * 1000});
+  return {
+    mode: 'user-prefix',
+    prefix: USER_NPM_PREFIX,
+    command: ['npm', ...args, '--prefix', USER_NPM_PREFIX],
+    launcher: linkUserCommands(USER_NPM_PREFIX),
+    recovered_from: 'global-install-permission-denied',
+  };
+}
+
 function bundledBinary(moduleName, property = 'path') {
   try {
     const value = require(moduleName);
@@ -303,13 +354,14 @@ function setup(options) {
       ok: true,
       dry_run: true,
       global_install: globalInstall,
+      permission_fallback: ['npm', 'install', '-g', `${PACKAGE}@${VERSION}`, '--prefix', USER_NPM_PREFIX],
       private_runtime: {directory: VENV_DIR, requirement: 'Pillow>=10,<13'},
       skill_install: installSkill({...options, global: true, yes: true}),
       config_file: CONFIG_FILE,
       workspace: WORKSPACE_DIR,
     };
   }
-  if (!options['skip-global-install']) run('npm', ['install', '-g', `${PACKAGE}@${VERSION}`], {inherit: true, timeout: 10 * 60 * 1000});
+  const cliInstall = options['skip-global-install'] ? {mode: 'skipped'} : installGlobalCli();
   const runtime = ensurePython(options);
   fs.mkdirSync(WORKSPACE_DIR, {recursive: true});
   const config = {
@@ -323,7 +375,7 @@ function setup(options) {
   writeJson(CONFIG_FILE, config);
   const skillInstall = options['skip-skill-install'] ? {ok: true, skipped: true} : installSkill({...options, global: true, yes: true});
   const checked = doctor();
-  return {ok: checked.ok, installed: true, config_file: CONFIG_FILE, runtime, skill_install: skillInstall, doctor: checked};
+  return {ok: checked.ok, installed: true, cli_install: cliInstall, config_file: CONFIG_FILE, runtime, skill_install: skillInstall, doctor: checked};
 }
 
 function configuredPython(config = readJson(CONFIG_FILE)) {
@@ -413,7 +465,7 @@ function runMakaron(args) {
 }
 
 function help() {
-  console.log(`${PACKAGE} ${VERSION}\n\nUsage:\n  npx -y ${PACKAGE} setup [--agent codex]\n  makaron-ad login\n  makaron-ad create --image /path/input.jpg --skill "Marketplace Skill Name" [--locale en|ja|yue|all]\n\nAgent-friendly shorthand:\n  makaron-ad /path/input.jpg "Marketplace Skill Name" [--locale yue]\n\nCommands:\n  setup          Install the global CLI, private Python/Pillow runtime, and Agent Skill\n  install-skill  Install only the bundled makaron-ad-creator Skill\n  login          Verify once and save the API key in macOS Keychain\n  logout         Remove the saved API key from macOS Keychain\n  credits        Show Makaron credit balance using the saved login\n  doctor         Check runtime, Makaron, FFmpeg, and Skill availability\n  create         Generate one or more selected locales (default: EN/JA/YUE)\n  status         Inspect a resumable campaign\n  run            Resume a campaign\n\nLocale mapping is fixed: en→English UI, ja→Japanese UI, yue→Traditional-Chinese UI. All workflow command results are JSON. Live create operations use Makaron credits. Supplying an image attests that it is authorized for the requested ad production.`);
+  console.log(`${PACKAGE} ${VERSION}\n\nUsage:\n  npx -y ${PACKAGE} setup [--agent codex]\n  makaron-ad login\n  makaron-ad create --image /path/input.jpg --skill "Marketplace Skill Name" [--locale en|ja|yue|all]\n  makaron-ad status <campaign-id|campaign-directory|campaign.json>\n  makaron-ad run <campaign-id|campaign-directory|campaign.json>\n\nAgent-friendly shorthand:\n  makaron-ad /path/input.jpg "Marketplace Skill Name" [--locale yue]\n\nCommands:\n  setup          Install the global CLI, private Python/Pillow runtime, and Agent Skill\n  install-skill  Install only the bundled makaron-ad-creator Skill\n  login          Verify once and save the API key in macOS Keychain\n  logout         Remove the saved API key from macOS Keychain\n  credits        Show Makaron credit balance using the saved login\n  doctor         Check runtime, Makaron, FFmpeg, and Skill availability\n  create         Generate one or more selected locales (default: EN/JA/YUE)\n  status         Inspect by campaign ID, directory, or campaign.json path\n  run            Resume by campaign ID, directory, or campaign.json path\n\nLocale mapping is fixed: en→English UI, ja→Japanese UI, yue→Traditional-Chinese UI. All workflow command results are JSON. Live create operations use Makaron credits. Supplying an image attests that it is authorized for the requested ad production.`);
 }
 
 function selectedLocales(options) {

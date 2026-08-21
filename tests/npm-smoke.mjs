@@ -13,6 +13,8 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'makaron-ad-npm-smoke-')
 const fakeKeychain = path.join(temporary, 'fake-security');
 const fakeMakaron = path.join(temporary, 'fake-makaron');
 const fakeKeyFile = path.join(temporary, 'stored-key');
+const fakeNpmBin = path.join(temporary, 'fake-npm-bin');
+const fakeNpm = path.join(fakeNpmBin, 'npm');
 fs.writeFileSync(fakeKeychain, [
   '#!/usr/bin/env node',
   "const fs = require('node:fs');",
@@ -29,6 +31,19 @@ fs.writeFileSync(fakeMakaron, [
   "if (process.argv[2] === 'credits') { process.stdout.write('Credits: 100\\n'); process.exit(0); }",
   'process.exit(0);',
 ].join('\n'), {mode: 0o700});
+fs.mkdirSync(fakeNpmBin, {recursive: true});
+fs.writeFileSync(fakeNpm, [
+  '#!/usr/bin/env node',
+  "const fs = require('node:fs');",
+  "const path = require('node:path');",
+  "const args = process.argv.slice(2);",
+  "const prefixIndex = args.indexOf('--prefix');",
+  "if (prefixIndex < 0) { process.stderr.write('npm ERR! code EACCES\\nnpm ERR! permission denied\\n'); process.exit(1); }",
+  "const prefix = args[prefixIndex + 1];",
+  "const bin = path.join(prefix, 'bin');",
+  "fs.mkdirSync(bin, {recursive: true});",
+  "for (const name of ['makaron-ad', 'makaron-ad-creator-cli']) fs.writeFileSync(path.join(bin, name), '#!/bin/sh\\nexit 0\\n', {mode: 0o700});",
+].join('\n'), {mode: 0o700});
 const env = {
   ...process.env,
   MAKARON_AD_HOME: temporary,
@@ -43,7 +58,7 @@ function invoke(args, extraEnv = {}) {
 }
 
 assert.match(invoke(['help']), /makaron-ad create/);
-assert.equal(invoke(['version']).trim(), '0.6.0');
+assert.equal(invoke(['version']).trim(), '0.6.1');
 assert.equal(fs.existsSync(fixedLogoCta), true);
 assert.ok(fs.statSync(fixedLogoCta).size > 1_000_000);
 assert.equal(fs.existsSync(uploadLogoCta), true);
@@ -51,7 +66,8 @@ assert.ok(fs.statSync(uploadLogoCta).size > 100_000);
 
 const drySetup = JSON.parse(invoke(['setup', '--dry-run']));
 assert.equal(drySetup.ok, true);
-assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.6.0');
+assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.6.1');
+assert.equal(drySetup.permission_fallback.join(' '), `npm install -g makaron-ad-creator-cli@0.6.1 --prefix ${path.join(temporary, 'npm-global')}`);
 assert.equal(drySetup.skill_install.command.includes('makaron-ad-creator'), true);
 
 const dryCreate = JSON.parse(invoke(['create', '--image', '/tmp/input.jpg', '--skill', 'Rainy Kiss', '--dry-run']));
@@ -65,6 +81,15 @@ const setup = JSON.parse(invoke(['setup', '--skip-global-install', '--skip-skill
 assert.equal(setup.ok, true);
 assert.equal(setup.runtime.mode, 'private-venv');
 assert.equal(fs.existsSync(path.join(temporary, 'config.json')), true);
+
+const permissionFallback = JSON.parse(invoke(['setup', '--skip-skill-install'], {
+  PATH: `${fakeNpmBin}${path.delimiter}${process.env.PATH}`,
+}));
+assert.equal(permissionFallback.ok, true);
+assert.equal(permissionFallback.cli_install.mode, 'user-prefix');
+assert.equal(permissionFallback.cli_install.recovered_from, 'global-install-permission-denied');
+assert.equal(fs.existsSync(path.join(temporary, 'npm-global', 'bin', 'makaron-ad')), true);
+assert.equal(fs.existsSync(path.join(temporary, 'bin', 'makaron-ad')), true);
 
 const doctor = JSON.parse(invoke(['doctor']));
 assert.equal(doctor.ok, true);

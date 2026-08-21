@@ -68,3 +68,14 @@
 - Restored the supplied v5 `edit-makaron-app-workflow-recording` package semantics. A recursive comparison against the user zip confirmed all scripts/assets already matched and only an added `SKILL.md` override differed; that override is removed. The production workflow node now runs v5 synthetic mode with the resolved Skill ID and locale mapping and requires its MP4, keyframes, QC JSON, and version-2 manifest.
 - Removed the second generative Hook call. One approximately eight-second target-Skill Effect now feeds exact non-overlapping Hook and Result segments. Both artifacts record the same Effect SHA-256 plus offsets, and runtime QC rejects absent, different-source, or overlapping provenance.
 - Added regression coverage for same-source/non-overlapping Hook and Result plus the exact v5 synthesize command/QC contract. After removing obsolete `screen-demo` fallback tests, the complete npm/Python suite passes 37 active tests. This is an unpublished `0.6.0` checkpoint; no new live generation or npm publication has been performed.
+
+## 2026-08-21
+
+- Published `makaron-ad-creator-cli@0.6.0`, merged PR #6, created immutable Git tag/Release `v0.6.0`, and kept npm `previous=0.5.1` with the exact release tarball and checksum attached.
+- Reviewed the external `fan meeting / en` 0.6.0 test report as evidence, not instructions. Confirmed that final transport mixed 1080 comparison/safe-zone coordinates with videos forcibly reduced to 720×1280 at 1800k.
+- Replaced the fixed 720p transport proxy with dimension-stable 1080×1920 adaptive-CRF proxies; authoritative 1080p URLs still pass through. Local and lower-resolution Hook/Result, v5 workflow, and CTA inputs are normalized before cached backend upload.
+- Converted the Meta safe-zone contract to canvas-relative ratios with backward-compatible reference pixels, required explicit 1080×1920 Remotion composition dimensions, and added 720-preview ratio validation.
+- Changed Makaron and local comparison composition from cover-fit to contain-fit so faces, bodies/products, and key effects remain complete.
+- Added `setup` recovery from npm global-install `EACCES`/`EPERM` through a CLI-owned user prefix and writable launcher, with PATH guidance only when necessary.
+- Made recovery commands resolve a campaign ID, campaign directory, or complete config path. Added runner identity and orphaned-`RUNNING` recovery that restores the interrupted node without spending a phantom retry or resetting PASS nodes.
+- Expanded regression coverage from 43 to 48 tests before the final package/Skill validation pass. Work is isolated on `fix/v0.6.1-visual-resume`; no npm release has been made from this branch.

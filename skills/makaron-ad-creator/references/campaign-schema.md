@@ -27,7 +27,7 @@
 - `output.duration_seconds`: final maximum retained for backward compatibility, default `20`.
 - `output.width` / `output.height`: preferred export target `1080×1920`.
 - `output.minimum_width` / `output.minimum_height`: hard acceptance floor `720×1280` at 9:16.
-- `output.safe_zone`: default `meta-reels` overlay protection: top `250`, bottom `340`, left `90`, right `180`, caption top `270`, maximum `20` visible characters per line.
+- `output.safe_zone`: default `meta-reels` overlay protection stored as both the 1080×1920 reference pixels and canvas-relative ratios: top `250/1920`, bottom `340/1920`, left `90/1080`, right `180/1080`, caption top `270/1920`, maximum `20` visible characters per line. Ratio fields are authoritative for layout at non-reference preview sizes; legacy pixel-only Campaigns remain readable.
 
 `catalog_json` remains available for offline/reproducible v5 workflow generation. By default the production DAG runs the bundled v5 synthetic renderer against live `makaron skills list --json` metadata, passing the resolved Skill ID and only the selected mapped UI locale.
 

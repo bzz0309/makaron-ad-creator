@@ -10,7 +10,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable, normalize_near_vertical_resolution
-from makaron_ad_creator.cli import main
+from makaron_ad_creator.cli import main, resolve_campaign_path
 from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
@@ -143,6 +143,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["output"]["minimum_height"], 1280)
         self.assertEqual(config["output"]["safe_zone"]["top_px"], 250)
         self.assertEqual(config["output"]["safe_zone"]["bottom_px"], 340)
+        self.assertAlmostEqual(config["output"]["safe_zone"]["top_ratio"], 250 / 1920)
+        self.assertAlmostEqual(config["output"]["safe_zone"]["caption_top_ratio"], 270 / 1920)
         self.assertEqual(config["automation"]["builder_skill_id"], "tiktok-video")
         self.assertLess(DEFAULT_LOGO_CTA.stat().st_size, 1_000_000)
         self.assertGreater(DEFAULT_LOGO_CTA_MASTER.stat().st_size, DEFAULT_LOGO_CTA.stat().st_size)
@@ -250,7 +252,7 @@ class PipelineTests(unittest.TestCase):
         node = next(item for item in pipeline.plan if item["id"] == "final-en")
         publisher = SimpleNamespace(publish_local_media=lambda path, role: "https://cdn.example.com/logo.mp4")
         with patch.object(pipeline, "_adapter", return_value=publisher), \
-             patch("makaron_ad_creator.pipeline.probe_video", return_value={"duration": 2.5}):
+             patch("makaron_ad_creator.pipeline.probe_video", return_value={"width": 1080, "height": 1920, "duration": 2.5}):
             pipeline._write_agent_request(node)
 
         request = read_json(path.parent / "run" / "requests" / "final-en.json")
@@ -261,6 +263,8 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(request["input_roles"]["videos"][1], "non_overlapping_effect_result")
         self.assertEqual(request["composition"]["engine"], "makaron-agent-remotion")
         self.assertEqual(request["composition"]["builder_skill_id"], "tiktok-video")
+        self.assertEqual((request["composition"]["width"], request["composition"]["height"]), (1080, 1920))
+        self.assertTrue(request["composition"]["dimensions_must_not_follow_source_media"])
         self.assertEqual(request["composition"]["tts_engine"], "seed-audio")
         self.assertEqual(request["composition"]["caption_format"], "remotion-caption-json")
         self.assertTrue(request["composition"]["scene_bound_caption_timing"])
@@ -371,11 +375,12 @@ class PipelineTests(unittest.TestCase):
         response_dir.mkdir(parents=True, exist_ok=True)
         write_json(response_dir / "hook.json", {"result": {"videos": [{"videoUrl": "https://stale.example.com/hook.mp4"}]}})
         publisher = SimpleNamespace(publish_local_media=lambda media, role: "https://cdn.example.com/derived-hook.mp4")
-        with patch.object(pipeline, "_adapter", return_value=publisher):
+        with patch.object(pipeline, "_adapter", return_value=publisher), \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value={"width": 1080, "height": 1920}):
             resolved = pipeline._final_video_input("hook", hook, role="hook")
         self.assertEqual(resolved, "https://cdn.example.com/derived-hook.mp4")
 
-    def test_large_final_video_gets_upload_safe_720p_proxy(self) -> None:
+    def test_large_final_video_gets_upload_safe_1080p_proxy(self) -> None:
         path = self.make_campaign()
         pipeline = Pipeline(path, executor="agent")
         source = self.root / "workflow.mp4"
@@ -387,11 +392,37 @@ class PipelineTests(unittest.TestCase):
             output.write_bytes(b"proxy")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        with patch("makaron_ad_creator.pipeline.run_command", side_effect=fake_run), \
-             patch("makaron_ad_creator.pipeline.probe_video", return_value={"width": 720, "height": 1280}):
+        with patch("makaron_ad_creator.pipeline.run_command", side_effect=fake_run) as mocked_run, \
+             patch("makaron_ad_creator.pipeline.probe_video", side_effect=[
+                 {"width": 1080, "height": 1920},
+                 {"width": 1080, "height": 1920},
+             ]):
             proxy = pipeline._upload_safe_video(source, "workflow-en")
-        self.assertEqual(proxy.name, "workflow-en-720p.mp4")
+        self.assertEqual(proxy.name, "workflow-en-1080p.mp4")
         self.assertEqual(proxy.read_bytes(), b"proxy")
+        command = mocked_run.call_args.args[0]
+        self.assertIn("scale=1080:1920", command[command.index("-vf") + 1])
+        self.assertIn("-crf", command)
+        self.assertNotIn("-b:v", command)
+
+    def test_small_720p_final_input_is_normalized_before_upload(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        source = self.root / "cta.mp4"
+        source.write_bytes(b"small-720p")
+
+        def fake_run(command: list[str]):
+            Path(command[-1]).write_bytes(b"normalized-1080p")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("makaron_ad_creator.pipeline.run_command", side_effect=fake_run), \
+             patch("makaron_ad_creator.pipeline.probe_video", side_effect=[
+                 {"width": 720, "height": 1280},
+                 {"width": 1080, "height": 1920},
+             ]):
+            proxy = pipeline._upload_safe_video(source, "logo-cta")
+        self.assertEqual(proxy.name, "logo-cta-1080p.mp4")
+        self.assertEqual(proxy.read_bytes(), b"normalized-1080p")
 
     def test_payload_too_large_is_not_retried(self) -> None:
         self.assertTrue(is_non_retryable_error(AdCreatorError("Error 413: Request Entity Too Large")))
@@ -435,6 +466,36 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(artifact["ui_locale"], "en")
         self.assertEqual(artifact["qc_manifest"], str(qc.resolve()))
         self.assertEqual(artifact["workflow_manifest"], str(manifest.resolve()))
+
+    def test_comparison_prompt_uses_contain_fit_without_cropping(self) -> None:
+        path = self.make_campaign()
+        prompt = comparison_prompt(validate_config(read_json(path), path))
+        self.assertIn("contain-fit", prompt)
+        self.assertIn("never crop", prompt)
+        self.assertNotIn("cover-fit panels", prompt)
+
+    def test_orphaned_running_node_is_resumed_without_spending_an_attempt(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        pipeline.state["status"] = "RUNNING"
+        pipeline.state["runner"] = {"pid": 99999999, "host": __import__("socket").gethostname()}
+        pipeline.state["nodes"]["validate"].update({"status": "PASS", "attempts": 1})
+        pipeline.state["nodes"]["scripts"].update({"status": "RUNNING", "attempts": 1})
+        pipeline.save()
+
+        resumed = Pipeline(path, executor="agent")
+        self.assertEqual(resumed.run(), "WAITING_FOR_AGENT")
+        state = read_json(path.parent / "state.json")
+        self.assertEqual(state["nodes"]["scripts"]["status"], "WAITING_FOR_AGENT")
+        self.assertEqual(state["nodes"]["scripts"]["attempts"], 1)
+        self.assertEqual(state["recoveries"][-1]["nodes"], ["scripts"])
+
+    def test_campaign_reference_accepts_id_directory_and_config_path(self) -> None:
+        path = self.make_campaign("reference-test")
+        with patch.dict("os.environ", {"MAKARON_AD_WORKSPACE": str(self.root)}):
+            self.assertEqual(resolve_campaign_path("reference-test"), path.resolve())
+            self.assertEqual(resolve_campaign_path(str(path.parent)), path.resolve())
+            self.assertEqual(resolve_campaign_path(str(path)), path.resolve())
 
     def test_schema_rejects_wrong_ui_mapping_for_selected_locale(self) -> None:
         path = self.make_campaign()
@@ -515,16 +576,19 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")
         request = read_json(path.parent / "run" / "requests" / "scripts.json")
         self.assertEqual(request["attempt"], 1)
+        self.assertEqual(request["model_preference"], "seedance-2-0")
         pipeline.fail_agent_node("scripts", "provider error")
 
         self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")
         request = read_json(path.parent / "run" / "requests" / "scripts.json")
         self.assertEqual(request["attempt"], 2)
+        self.assertEqual(request["model_preference"], "kling")
         pipeline.fail_agent_node("scripts", "provider error")
 
         self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")
         request = read_json(path.parent / "run" / "requests" / "scripts.json")
         self.assertEqual(request["attempt"], 3)
+        self.assertEqual(request["model_preference"], "grok")
         pipeline.fail_agent_node("scripts", "provider error")
         self.assertEqual(read_json(path.parent / "state.json")["nodes"]["scripts"]["status"], "BLOCKED")
 

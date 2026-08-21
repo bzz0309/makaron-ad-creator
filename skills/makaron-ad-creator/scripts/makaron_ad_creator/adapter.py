@@ -452,10 +452,26 @@ def validate_timing_manifest(props: dict[str, Any]) -> None:
     safe = props.get("safeZone")
     if not isinstance(safe, dict):
         raise AdCreatorError("Remotion timing manifest is missing the Meta safeZone")
-    safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
-    for key, minimum in safe_minimums.items():
-        if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
-            raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
+    ratio_minimums = {
+        "topRatio": 250 / 1920,
+        "bottomRatio": 340 / 1920,
+        "leftRatio": 90 / 1080,
+        "rightRatio": 180 / 1080,
+        "captionTopRatio": 250 / 1920,
+    }
+    if all(key in safe for key in ratio_minimums):
+        for key, minimum in ratio_minimums.items():
+            ratio = numeric(safe.get(key), f"safeZone.{key}")
+            if ratio < minimum or ratio >= 1:
+                raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum:.6f} and below 1")
+        if numeric(safe["captionTopRatio"], "safeZone.captionTopRatio") < numeric(safe["topRatio"], "safeZone.topRatio"):
+            raise AdCreatorError("Remotion safeZone.captionTopRatio must not enter the top overlay zone")
+    else:
+        # Contract-v2 designs created before proportional safe zones remain valid at 1080x1920.
+        safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
+        for key, minimum in safe_minimums.items():
+            if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
+                raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
     maximum_characters = numeric(safe.get("maxCharactersPerLine", 0), "safeZone.maxCharactersPerLine")
     if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 21):
         raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 20")

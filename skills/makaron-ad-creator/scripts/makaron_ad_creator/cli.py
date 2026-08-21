@@ -33,6 +33,34 @@ def _parse_ad_locales(raw: str | None) -> list[str]:
     return selected
 
 
+def resolve_campaign_path(reference: str) -> Path:
+    """Resolve a campaign.json path from a file, directory, or campaign id."""
+    raw = Path(reference).expanduser()
+    candidates: list[Path] = []
+    if raw.is_absolute() or raw.exists() or len(raw.parts) > 1:
+        candidates.extend([raw, raw / "campaign.json"])
+    else:
+        candidates.extend([
+            _workspace_root() / "campaigns" / reference / "campaign.json",
+            PROJECT_ROOT / "campaigns" / reference / "campaign.json",
+            raw,
+            raw / "campaign.json",
+        ])
+    checked: list[str] = []
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if str(resolved) in checked:
+            continue
+        checked.append(str(resolved))
+        if resolved.is_dir():
+            resolved = resolved / "campaign.json"
+        if resolved.is_file() and resolved.name == "campaign.json":
+            return resolved
+    raise AdCreatorError(
+        f"Campaign not found: {reference}. Pass a campaign ID, campaign directory, or full campaign.json path."
+    )
+
+
 def _resolve_marketplace_skill(skill_name: str, binary: str) -> dict:
     result = run([binary, "skills", "show", skill_name, "--json"], timeout=120)
     candidates = [value for value in json_candidates(result.stdout) if isinstance(value, dict)]
@@ -177,7 +205,7 @@ def command_init(args: argparse.Namespace) -> int:
 
 
 def command_plan(args: argparse.Namespace) -> int:
-    config_path = Path(args.campaign).expanduser().resolve()
+    config_path = resolve_campaign_path(args.campaign)
     config = validate_config(read_json(config_path), config_path)
     plan = {"version": 1, "campaign_id": config["campaign_id"], "nodes": plan_for(config)}
     destination = config_path.parent / "plan.json"
@@ -187,7 +215,7 @@ def command_plan(args: argparse.Namespace) -> int:
 
 
 def command_run(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign), executor=args.executor)
+    pipeline = Pipeline(resolve_campaign_path(args.campaign), executor=args.executor)
     status = pipeline.run()
     payload = {"status": status, "state": str(pipeline.state_path)}
     waiting = next((value for value in pipeline.state["nodes"].values() if value.get("status") == "WAITING_FOR_AGENT"), None)
@@ -198,7 +226,7 @@ def command_run(args: argparse.Namespace) -> int:
 
 
 def command_status(args: argparse.Namespace) -> int:
-    config_path = Path(args.campaign).expanduser().resolve()
+    config_path = resolve_campaign_path(args.campaign)
     state_path = config_path.parent / "state.json"
     if not state_path.exists():
         print(json.dumps({"status": "NOT_STARTED", "state": str(state_path)}, indent=2))
@@ -208,7 +236,7 @@ def command_status(args: argparse.Namespace) -> int:
 
 
 def command_complete(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign), executor="agent")
+    pipeline = Pipeline(resolve_campaign_path(args.campaign), executor="agent")
     pipeline.complete_agent_node(
         args.node,
         Path(args.artifact),
@@ -221,7 +249,7 @@ def command_complete(args: argparse.Namespace) -> int:
 
 
 def command_fail(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign), executor="agent")
+    pipeline = Pipeline(resolve_campaign_path(args.campaign), executor="agent")
     pipeline.fail_agent_node(args.node, args.error)
     status = pipeline.state["nodes"][args.node]["status"]
     print(json.dumps({"status": status, "node": args.node, "state": str(pipeline.state_path)}, indent=2))
@@ -229,7 +257,7 @@ def command_fail(args: argparse.Namespace) -> int:
 
 
 def command_retry(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign))
+    pipeline = Pipeline(resolve_campaign_path(args.campaign))
     node_ids = [item["id"] for item in pipeline.plan]
     if args.node not in node_ids:
         raise AdCreatorError(f"Unknown node: {args.node}")
@@ -303,20 +331,20 @@ def parser() -> argparse.ArgumentParser:
     init.set_defaults(func=command_init)
 
     plan = sub.add_parser("plan", help="Print and save the campaign DAG")
-    plan.add_argument("campaign")
+    plan.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     plan.set_defaults(func=command_plan)
 
     execute = sub.add_parser("run", help="Run or resume a campaign")
-    execute.add_argument("campaign")
+    execute.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     execute.add_argument("--executor", choices=("agent", "makaron"))
     execute.set_defaults(func=command_run)
 
     status = sub.add_parser("status", help="Print resumable pipeline state")
-    status.add_argument("campaign")
+    status.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     status.set_defaults(func=command_status)
 
     complete = sub.add_parser("complete", help="Attach an artifact produced by another Agent")
-    complete.add_argument("campaign")
+    complete.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     complete.add_argument("--node", required=True)
     complete.add_argument("--artifact", required=True)
     complete.add_argument("--response-id")
@@ -325,13 +353,13 @@ def parser() -> argparse.ArgumentParser:
     complete.set_defaults(func=command_complete)
 
     fail = sub.add_parser("fail", help="Report a failed Agent request and advance its retry budget")
-    fail.add_argument("campaign")
+    fail.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     fail.add_argument("--node", required=True)
     fail.add_argument("--error", required=True)
     fail.set_defaults(func=command_fail)
 
     retry = sub.add_parser("retry", help="Reset one node and all downstream nodes")
-    retry.add_argument("campaign")
+    retry.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     retry.add_argument("--node", required=True)
     retry.set_defaults(func=command_retry)
 

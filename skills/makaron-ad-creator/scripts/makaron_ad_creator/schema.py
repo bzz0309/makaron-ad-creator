@@ -101,8 +101,19 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
     output["minimum_width"] = minimum_width
     output["minimum_height"] = minimum_height
     safe_zone = output.setdefault("safe_zone", {})
+    try:
+        reference_width = int(safe_zone.get("reference_width", output["width"]))
+        reference_height = int(safe_zone.get("reference_height", output["height"]))
+        if reference_width <= 0 or reference_height <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        reference_width = int(output["width"])
+        reference_height = int(output["height"])
+        errors.append("output.safe_zone reference dimensions must be positive integers")
     safe_defaults = {
         "profile": "meta-reels",
+        "reference_width": reference_width,
+        "reference_height": reference_height,
         "top_px": 250,
         "bottom_px": 340,
         "left_px": 90,
@@ -114,11 +125,34 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
         safe_zone.setdefault(key, value)
     if safe_zone.get("profile") != "meta-reels":
         errors.append("output.safe_zone.profile must be meta-reels")
-    for key in ("top_px", "bottom_px", "left_px", "right_px", "caption_top_px", "max_characters_per_line"):
+    for key in ("reference_width", "reference_height", "top_px", "bottom_px", "left_px", "right_px", "caption_top_px", "max_characters_per_line"):
         try:
             safe_zone[key] = int(safe_zone[key])
         except (TypeError, ValueError):
             errors.append(f"output.safe_zone.{key} must be an integer")
+    ratio_specs = {
+        "top_ratio": ("top_px", reference_height),
+        "bottom_ratio": ("bottom_px", reference_height),
+        "left_ratio": ("left_px", reference_width),
+        "right_ratio": ("right_px", reference_width),
+        "caption_top_ratio": ("caption_top_px", reference_height),
+    }
+    for ratio_key, (pixel_key, axis) in ratio_specs.items():
+        try:
+            ratio = float(safe_zone.get(ratio_key, float(safe_zone[pixel_key]) / float(axis)))
+            if not 0 < ratio < 1:
+                raise ValueError
+            safe_zone[ratio_key] = ratio
+        except (TypeError, ValueError, ZeroDivisionError):
+            errors.append(f"output.safe_zone.{ratio_key} must be a ratio between 0 and 1")
+    if all(isinstance(safe_zone.get(key), float) for key in ratio_specs):
+        if safe_zone["caption_top_ratio"] < safe_zone["top_ratio"]:
+            errors.append("output.safe_zone.caption_top_ratio must not enter the top overlay zone")
+        safe_zone["top_px"] = round(output["height"] * safe_zone["top_ratio"])
+        safe_zone["bottom_px"] = round(output["height"] * safe_zone["bottom_ratio"])
+        safe_zone["left_px"] = round(output["width"] * safe_zone["left_ratio"])
+        safe_zone["right_px"] = round(output["width"] * safe_zone["right_ratio"])
+        safe_zone["caption_top_px"] = round(output["height"] * safe_zone["caption_top_ratio"])
     if all(isinstance(safe_zone.get(key), int) for key in ("top_px", "bottom_px", "caption_top_px")):
         if safe_zone["caption_top_px"] < safe_zone["top_px"]:
             errors.append("output.safe_zone.caption_top_px must not enter the top overlay zone")
@@ -259,11 +293,18 @@ def campaign_template(
             "minimum_height": 1280,
             "safe_zone": {
                 "profile": "meta-reels",
+                "reference_width": 1080,
+                "reference_height": 1920,
                 "top_px": 250,
                 "bottom_px": 340,
                 "left_px": 90,
                 "right_px": 180,
                 "caption_top_px": 270,
+                "top_ratio": 250 / 1920,
+                "bottom_ratio": 340 / 1920,
+                "left_ratio": 90 / 1080,
+                "right_ratio": 180 / 1080,
+                "caption_top_ratio": 270 / 1920,
                 "max_characters_per_line": 20,
             },
             "minimum_duration_seconds": 15.0,
