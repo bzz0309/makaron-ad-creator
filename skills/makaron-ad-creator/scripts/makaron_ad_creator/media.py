@@ -23,6 +23,57 @@ def extract_after_frame(video: Path, output: Path) -> Path:
     return output
 
 
+def effect_segment_plan(video: Path, *, preferred_hook_seconds: float = 2.5, minimum_result_seconds: float = 3.0) -> dict[str, float]:
+    """Split one target-Skill result into non-overlapping Hook and Result ranges."""
+    duration = float(probe_video(video)["duration"])
+    if duration < 4.5:
+        raise AdCreatorError(
+            f"Target-Skill effect is too short to derive distinct Hook and Result segments: {duration:.3f}s"
+        )
+    hook_duration = min(preferred_hook_seconds, duration - minimum_result_seconds)
+    if hook_duration < 1.5:
+        raise AdCreatorError("Target-Skill effect leaves less than 1.5 seconds for an extracted Hook")
+    return {
+        "source_duration": duration,
+        "hook_start": 0.0,
+        "hook_duration": hook_duration,
+        "result_start": hook_duration,
+        "result_duration": duration - hook_duration,
+    }
+
+
+def extract_video_segment(video: Path, output: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+    """Encode an exact time range from a source video without generating new content."""
+    ffmpeg = require_binary("ffmpeg")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    run([
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video),
+        "-ss",
+        f"{start_seconds:.3f}",
+        "-t",
+        f"{duration_seconds:.3f}",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(output),
+    ], timeout=600)
+    return output
+
+
 def _cover(image: Image.Image, size: tuple[int, int]) -> Image.Image:
     target_w, target_h = size
     scale = max(target_w / image.width, target_h / image.height)
@@ -65,6 +116,19 @@ def compose_comparison(before: Path, after: Path, output: Path, width: int = 108
     output.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output, quality=95)
     return output
+
+
+def probe_image(path: Path) -> dict[str, Any]:
+    with Image.open(path) as image:
+        width, height = image.size
+        image.verify()
+    return {
+        "path": str(path),
+        "sha256": sha256(path),
+        "bytes": path.stat().st_size,
+        "width": int(width),
+        "height": int(height),
+    }
 
 
 def probe_audio(path: Path) -> dict[str, Any]:
@@ -168,3 +232,58 @@ def probe_video(path: Path) -> dict[str, Any]:
         "duration": float(metadata.get("format", {}).get("duration", 0)),
         "has_audio": audio is not None,
     }
+
+
+def is_vertical_resolution_acceptable(info: dict[str, Any], output: dict[str, Any]) -> bool:
+    """Accept the 1080p target or a 9:16 fallback that is never below 720p."""
+    width = int(info.get("width", 0))
+    height = int(info.get("height", 0))
+    minimum_width = max(720, int(output.get("minimum_width", 720)))
+    minimum_height = max(1280, int(output.get("minimum_height", 1280)))
+    if width < minimum_width or height < minimum_height:
+        return False
+    return abs((width / height) - (9 / 16)) <= 0.01
+
+
+def normalize_near_vertical_resolution(video: Path, output: dict[str, Any]) -> bool:
+    """Pad a provider's near-9:16 720p result when it is only a few pixels short."""
+    info = probe_video(video)
+    if is_vertical_resolution_acceptable(info, output):
+        return False
+    width = int(info.get("width", 0))
+    height = int(info.get("height", 0))
+    minimum_width = max(720, int(output.get("minimum_width", 720)))
+    minimum_height = max(1280, int(output.get("minimum_height", 1280)))
+    if (
+        width < minimum_width
+        or height < round(minimum_height * 0.98)
+        or abs((width / max(height, 1)) - (9 / 16)) > 0.015
+    ):
+        return False
+    ffmpeg = require_binary("ffmpeg")
+    normalized = video.with_name(f"{video.stem}.normalized{video.suffix}")
+    run([
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video),
+        "-vf",
+        f"scale={minimum_width}:{minimum_height}:force_original_aspect_ratio=decrease,pad={minimum_width}:{minimum_height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(normalized),
+    ], timeout=600)
+    normalized.replace(video)
+    return True

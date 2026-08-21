@@ -13,8 +13,10 @@ from .util import (
     extract_media_urls,
     extract_response_id,
     json_candidates,
+    read_json,
     require_binary,
     run,
+    sha256,
     walk,
     write_json,
 )
@@ -52,11 +54,16 @@ class MakaronAdapter:
         prompt: str,
         destination: Path | None = None,
         skill_id: str | None = None,
-        images: list[Path] | None = None,
-        videos: list[Path] | None = None,
+        images: list[Path | str] | None = None,
+        videos: list[Path | str] | None = None,
         audios: list[Path | str] | None = None,
         require_generated_video: bool = False,
+        require_generated_image: bool = False,
+        allow_remotion_fallback: bool = True,
+        remotion_contract: str = "ad-final",
     ) -> dict[str, Any]:
+        if require_generated_video and require_generated_image:
+            raise AdCreatorError("A chat output cannot require both a generated video and generated image")
         prompt_path = self.run_dir / "prompts" / f"{node_id}.txt"
         prompt_path.parent.mkdir(parents=True, exist_ok=True)
         prompt_path.write_text(prompt.rstrip() + "\n", encoding="utf-8")
@@ -76,20 +83,29 @@ class MakaronAdapter:
         raw: Any = values[-1] if values else {"text": result.stdout}
         response_id = extract_response_id(raw)
         urls = extract_media_urls(raw)
-        needs_materialized_response = not urls or (
-            require_generated_video
-            and not extract_generated_video_urls(raw)
-            and not extract_remotion_design(raw)
+        generated_video_urls = extract_generated_video_urls(raw)
+        generated_image_urls = extract_generated_image_urls(raw)
+        needs_materialized_response = (
+            not urls
+            or (require_generated_video and not generated_video_urls and not extract_remotion_design(raw))
+            or (require_generated_image and not generated_image_urls)
         )
         if response_id and needs_materialized_response:
-            raw, urls = self._materialize(node_id, response_id, raw)
+            required_kind = "video" if require_generated_video else "image" if require_generated_image else None
+            raw, urls = self._materialize(node_id, response_id, raw, required_kind=required_kind)
         response_path = self.run_dir / "responses" / f"{node_id}.json"
         write_json(response_path, {"response_id": response_id, "media_urls": urls, "response": raw})
+        selected_url: str | None = None
         if destination:
-            downloadable = extract_generated_video_urls(raw) if require_generated_video else urls
+            if require_generated_video:
+                downloadable = extract_generated_video_urls(raw)
+            elif require_generated_image:
+                downloadable = extract_generated_image_urls(raw)
+            else:
+                downloadable = urls
             if not downloadable:
-                if require_generated_video:
-                    fallback = self.render_remotion_fallback(node_id, raw, destination)
+                if require_generated_video and allow_remotion_fallback:
+                    fallback = self.render_remotion_fallback(node_id, raw, destination, contract=remotion_contract)
                     return {
                         "response_id": response_id,
                         "media_urls": urls,
@@ -97,7 +113,8 @@ class MakaronAdapter:
                         "response_path": str(response_path),
                         "render_fallback": fallback,
                     }
-                raise AdCreatorError(f"Makaron returned no downloadable media for {node_id}; response_id={response_id or 'unknown'}")
+                media_label = "generated video" if require_generated_video else "generated image" if require_generated_image else "downloadable media"
+                raise AdCreatorError(f"Makaron returned no {media_label} for {node_id}; response_id={response_id or 'unknown'}")
             expected_video = destination.suffix.lower() in {".mp4", ".mov", ".m4v"}
             matching = []
             for url in downloadable:
@@ -105,27 +122,84 @@ class MakaronAdapter:
                 is_video = suffix in {".mp4", ".mov", ".m4v", ".webm"} or "video" in url.lower()
                 if is_video == expected_video:
                     matching.append(url)
-            download((matching or downloadable)[0], destination)
-        return {"response_id": response_id, "media_urls": urls, "response": raw, "response_path": str(response_path)}
+            selected_url = (matching or downloadable)[0]
+            download(selected_url, destination)
+        return {
+            "response_id": response_id,
+            "media_urls": urls,
+            "source_url": selected_url,
+            "response": raw,
+            "response_path": str(response_path),
+        }
 
-    def render_remotion_fallback(self, node_id: str, response: Any, destination: Path) -> dict[str, Any]:
+    def publish_local_media(self, path: Path, *, role: str) -> str:
+        """Publish one local final-input asset through Makaron's backend upload path.
+
+        This bypasses the signed-URL PUT path used by local --video/--audio inputs,
+        which is unreachable from some Agent sandboxes. Content hashes make the
+        operation resumable and prevent duplicate uploads.
+        """
+        path = path.resolve()
+        if not path.is_file() or path.stat().st_size == 0:
+            raise AdCreatorError(f"Cannot publish missing or empty local media: {path}")
+        digest = sha256(path)
+        cache_path = self.run_dir / "published-media.json"
+        cache = read_json(cache_path) if cache_path.is_file() else {"version": 1, "items": {}}
+        cached = cache.get("items", {}).get(digest, {})
+        cached_url = str(cached.get("url") or "") if isinstance(cached, dict) else ""
+        if cached_url.startswith(("https://", "http://")):
+            return cached_url
+
+        campaign = re.sub(r"[^a-zA-Z0-9._-]+", "-", self.run_dir.parent.name).strip("-") or "campaign"
+        safe_role = re.sub(r"[^a-zA-Z0-9._-]+", "-", role).strip("-") or "media"
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "-", path.name).strip("-") or "asset"
+        storage_path = f"ad-creator/{campaign}/{safe_role}-{digest[:12]}-{safe_name}"
+        command = [self.binary, "admin", "upload", str(path), storage_path]
+        self._log(f"publish-{safe_role}", command)
+        result = run(command, timeout=900)
+        combined = f"{result.stdout}\n{result.stderr}"
+        candidates = re.findall(r"https?://[^\s\"'<>]+", combined)
+        url = next((candidate.rstrip(".,);]}") for candidate in candidates if "cdn.makaron.app" in candidate), "")
+        if not url:
+            raise AdCreatorError(f"Makaron admin upload returned no CDN URL for {path.name}")
+        cache.setdefault("items", {})[digest] = {
+            "url": url,
+            "path": str(path),
+            "role": role,
+            "storage_path": storage_path,
+        }
+        write_json(cache_path, cache)
+        return url
+
+    def render_remotion_fallback(
+        self,
+        node_id: str,
+        response: Any,
+        destination: Path,
+        *,
+        contract: str = "ad-final",
+    ) -> dict[str, Any]:
         design = extract_remotion_design(response)
         if not design:
             raise AdCreatorError(
                 f"Makaron returned no exported final MP4 or reusable Remotion design for {node_id}; "
                 "attached source videos are not final artifacts"
             )
+        if contract != "ad-final":
+            raise AdCreatorError(f"Unknown Remotion fallback contract: {contract}")
+        validate_ad_remotion_design(design)
         design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
         write_json(design_path, design)
         script = Path(__file__).resolve().parents[1] / "remotion_fallback" / "render.mjs"
         if not script.is_file():
             raise AdCreatorError(f"Bundled Remotion fallback renderer is missing: {script}")
         node = require_binary("node")
-        run([node, str(script), str(design_path), str(destination)], timeout=3600)
+        run([node, str(script), str(design_path), str(destination), contract], timeout=3600)
         if not destination.is_file() or destination.stat().st_size == 0:
             raise AdCreatorError("Local Remotion fallback did not create a non-empty final MP4")
         return {
             "engine": "local-remotion-from-makaron-design",
+            "contract": contract,
             "design_path": str(design_path),
             "snapshot_id": design.get("snapshotId") or design.get("snapshot_id"),
         }
@@ -193,7 +267,14 @@ class MakaronAdapter:
             "response_path": str(response_path),
         }
 
-    def _materialize(self, node_id: str, response_id: str, fallback: Any) -> tuple[Any, list[str]]:
+    def _materialize(
+        self,
+        node_id: str,
+        response_id: str,
+        fallback: Any,
+        *,
+        required_kind: str | None = None,
+    ) -> tuple[Any, list[str]]:
         attempts = [
             [self.binary, "responses", "get", response_id, "--wait", "--materialize", "--json"],
             [self.binary, "responses", "get", response_id, "--wait", "--json"],
@@ -209,7 +290,14 @@ class MakaronAdapter:
             values = list(json_candidates(result.stdout))
             last = values[-1] if values else {"text": result.stdout}
             urls = extract_media_urls(last)
-            if urls:
+            generated = (
+                extract_generated_video_urls(last)
+                if required_kind == "video"
+                else extract_generated_image_urls(last)
+                if required_kind == "image"
+                else urls
+            )
+            if generated or (required_kind == "video" and extract_remotion_design(last)):
                 return last, urls
         return last, []
 
@@ -251,6 +339,43 @@ def extract_generated_video_urls(response: Any) -> list[str]:
     return found
 
 
+def extract_generated_image_urls(response: Any) -> list[str]:
+    """Return only images produced by the response, never uploaded source attachments."""
+    found: list[str] = []
+    roots = [response]
+    if isinstance(response, dict) and isinstance(response.get("response"), dict):
+        roots.append(response["response"])
+
+    def add(candidate: Any) -> None:
+        if not isinstance(candidate, str) or not candidate.startswith(("https://", "http://")):
+            return
+        suffix = Path(urllib.parse.urlparse(candidate).path).suffix.lower()
+        if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".avif"} and "image" not in candidate.lower():
+            return
+        if candidate not in found:
+            found.append(candidate)
+
+    for root in roots:
+        if not isinstance(root, dict):
+            continue
+        for item in root.get("output", []) if isinstance(root.get("output"), list) else []:
+            if isinstance(item, dict) and str(item.get("type", "")).lower() == "image":
+                add(item.get("url") or item.get("imageUrl") or item.get("image_url"))
+        result = root.get("result")
+        if isinstance(result, dict):
+            for item in result.get("images", []) if isinstance(result.get("images"), list) else []:
+                if isinstance(item, dict):
+                    add(item.get("imageUrl") or item.get("image_url") or item.get("url"))
+                else:
+                    add(item)
+        for item in root.get("images", []) if isinstance(root.get("images"), list) else []:
+            if isinstance(item, dict):
+                add(item.get("imageUrl") or item.get("image_url") or item.get("url"))
+            else:
+                add(item)
+    return found
+
+
 def extract_remotion_design(response: Any) -> dict[str, Any] | None:
     roots = [response]
     if isinstance(response, dict) and isinstance(response.get("response"), dict):
@@ -269,6 +394,106 @@ def extract_remotion_design(response: Any) -> dict[str, Any] | None:
             ):
                 return design
     return None
+
+
+def validate_ad_remotion_design(design: dict[str, Any]) -> None:
+    """Reject stale/hand-timed designs that predate the synchronized ad contract."""
+    props = design.get("props")
+    if not isinstance(props, dict):
+        raise AdCreatorError("Remotion design is missing props")
+    validate_timing_manifest(props)
+
+
+def bind_ad_remotion_assets(
+    design: dict[str, Any],
+    *,
+    comparison_image: str,
+    videos: list[str],
+    bgm_url: str,
+) -> dict[str, dict[str, str]]:
+    """Lock a persistent-project design to this campaign's exact media inputs."""
+    if len(videos) != 4:
+        raise AdCreatorError("Final asset binding requires Hook, result, workflow, and CTA videos")
+    props = design.get("props")
+    code = str(design.get("code") or "")
+    if not isinstance(props, dict):
+        raise AdCreatorError("Remotion design is missing props for asset binding")
+    expected = {
+        "comparisonImage": comparison_image,
+        "hookVideo": videos[0],
+        "resultVideo": videos[1],
+        "workflowVideo": videos[2],
+        "ctaVideo": videos[3],
+        "bgmUrl": bgm_url,
+    }
+    changes: dict[str, dict[str, str]] = {}
+    for key, value in expected.items():
+        if not isinstance(value, str) or not value.startswith(("https://", "http://")):
+            raise AdCreatorError(f"Final asset binding {key} must be an HTTP(S) URL")
+        if key not in code:
+            raise AdCreatorError(f"Remotion design code does not consume required bound prop {key}")
+        previous = str(props.get(key) or "")
+        if previous != value:
+            changes[key] = {"from": previous, "to": value}
+            props[key] = value
+    return changes
+
+
+def validate_timing_manifest(props: dict[str, Any]) -> None:
+    """Validate the portable caption/scene sidecar used by Makaron and other Agents."""
+    def numeric(value: Any, label: str) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError) as exc:
+            raise AdCreatorError(f"Remotion timing manifest has invalid {label}") from exc
+
+    if numeric(props.get("compositionContractVersion", 0), "compositionContractVersion") < 2:
+        raise AdCreatorError("Remotion design is missing compositionContractVersion 2")
+    safe = props.get("safeZone")
+    if not isinstance(safe, dict):
+        raise AdCreatorError("Remotion timing manifest is missing the Meta safeZone")
+    safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
+    for key, minimum in safe_minimums.items():
+        if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
+            raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
+    maximum_characters = numeric(safe.get("maxCharactersPerLine", 0), "safeZone.maxCharactersPerLine")
+    if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 21):
+        raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 20")
+    captions = props.get("captions")
+    if not isinstance(captions, list) or len(captions) != 5:
+        raise AdCreatorError("Remotion design must contain exactly five timed Caption objects")
+    for caption in captions:
+        if not isinstance(caption, dict) or not all(key in caption for key in ("text", "startMs", "endMs", "timestampMs", "confidence")):
+            raise AdCreatorError("Every Remotion caption requires text/startMs/endMs/timestampMs/confidence")
+        if numeric(caption["endMs"], "caption.endMs") <= numeric(caption["startMs"], "caption.startMs"):
+            raise AdCreatorError("Remotion caption timing must have endMs after startMs")
+    scenes = props.get("scenes")
+    required_scenes = ("hook", "comparison", "workflow", "result", "cta")
+    if isinstance(scenes, list):
+        normalized_scenes: dict[str, Any] = {}
+        for item in scenes:
+            scene_id = str(item.get("id") or "") if isinstance(item, dict) else ""
+            if scene_id in normalized_scenes:
+                raise AdCreatorError(f"Remotion design contains duplicate scene timing: {scene_id}")
+            if scene_id:
+                normalized_scenes[scene_id] = {key: value for key, value in item.items() if key != "id"}
+        scenes = normalized_scenes
+        props["scenes"] = scenes
+    if not isinstance(scenes, dict) or any(scene not in scenes for scene in required_scenes):
+        raise AdCreatorError("Remotion design must contain all five scene timing ranges")
+    for scene in required_scenes:
+        timing = scenes[scene]
+        if not isinstance(timing, dict) or numeric(timing.get("endMs", 0), f"scenes.{scene}.endMs") <= numeric(timing.get("startMs", -1), f"scenes.{scene}.startMs"):
+            raise AdCreatorError(f"Remotion scene {scene} has invalid timing")
+    expected_map = ["hook", "comparison", "workflow", "workflow", "result"]
+    if props.get("lineSceneMap") != expected_map:
+        raise AdCreatorError("Remotion lineSceneMap does not match the locked five-beat contract")
+    for caption, scene_name in zip(captions, expected_map):
+        scene = scenes[scene_name]
+        if numeric(caption["startMs"], "caption.startMs") < numeric(scene["startMs"], f"scenes.{scene_name}.startMs") or numeric(caption["endMs"], "caption.endMs") > numeric(scene["endMs"], f"scenes.{scene_name}.endMs"):
+            raise AdCreatorError(f"Caption crosses its assigned {scene_name} scene boundary")
+    if numeric(captions[-1]["endMs"], "caption.endMs") > numeric(scenes["cta"]["startMs"], "scenes.cta.startMs"):
+        raise AdCreatorError("Voiceover/subtitles must finish before CTA")
 
 
 def extract_json_object(response: Any, required_keys: tuple[str, ...] = ("en", "ja", "yue")) -> dict[str, Any]:

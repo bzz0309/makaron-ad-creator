@@ -10,7 +10,7 @@ Voiceover/subtitles use a selected subset of `en`, `ja`, and `yue`; app workflow
 
 ## Retry nodes, not campaigns
 
-Lock passed inputs. Retry only the failed generative node in `seedance-fast → kling → grok` order. Reset downstream dependents only when an upstream artifact changes.
+Lock passed inputs. Retry only the failed generative node in `seedance-2-0 → kling → grok` order. Reset downstream dependents only when an upstream artifact changes.
 
 ## Keep evidence with every artifact
 
@@ -47,3 +47,31 @@ Media URLs found anywhere in an Agent response are not automatically outputs: pr
 ## Derive timing ranges from multiple finished references
 
 Do not turn one finished ad into a universal frame chart. Measure several examples, keep the common order fixed, and encode only stable ranges: Hook 2.5–5 seconds, comparison about 2.5 seconds, workflow about 4 seconds, result 3–7 seconds, CTA 2–3 seconds, and total 15–20 seconds. Let mechanism clarity—not locale alone—choose the exact duration.
+
+## Derive scene cuts from narration, not guessed frames
+
+Generate the continuous Seed Audio take first, retain Caption JSON with measured `startMs`/`endMs`, and make scene boundaries contain their assigned lines. A scene may expand to fit natural speech; a subtitle or spoken line must never spill into the next semantic beat. Require a machine-readable timing contract before accepting a locally rendered Remotion fallback.
+
+## Derive Hook and Result from one target-Skill Effect
+
+Invoke the target Skill once for one continuous Effect source. Extract the opening Hook and later Result as exact non-overlapping ranges, preserve the Effect SHA-256 in both artifact records, and reject missing or overlapping provenance during QC. This avoids a second generation drifting away from the selected Skill while still preventing repeated source frames in the final edit.
+
+## Treat platform minimum and delivery target separately
+
+For Meta Reels, target 1080×1920 but accept 720×1280 as the hard 9:16 floor. Keep key content inside the Meta overlay-safe center; a generic 140px top caption offset is not Meta-safe on a 1080×1920 canvas.
+
+## Select evidence frames by visual quality, not timeline percentage
+
+An After image should be an exact decoded frame from the effect result, but its timestamp must be chosen after examining the whole clip. Reject transitions, blur, black frames, incomplete transformations, identity drift, UI, text, and watermark contamination. A hard-coded percentage such as 82% is only a timing guess and is not a creative-quality rule.
+
+## Require authoritative generated images as well as videos
+
+Uploaded source attachments can reappear in generic response URL lists. For Before, After, and comparison nodes, accept only authoritative generated-image fields. For localized workflows, run the bundled v5 synthetic renderer and require its MP4, keyframe sheet, QC JSON, and version-2 manifest. This prevents an input attachment or an unrelated generic workflow design from silently satisfying the node.
+
+## Keep large final inputs URL-native
+
+When an upstream cloud generation already has an authoritative public URL, store and reuse it instead of download-then-upload. Some Agent sandboxes cannot reach the Supabase/Cloudflare signed-URL PUT route used for local video/audio attachments. For unavoidable local assets, use the backend upload endpoint once, key the cache by content SHA-256, and pass the returned CDN URL to chat. Keep small images on the CLI's base64 path when available.
+
+## Bind persistent-project designs to the current campaign
+
+A long-lived project can contain visually similar media and music from earlier campaigns. Attachment order in the prompt is not enough: validate and overwrite the Remotion media props with the exact current campaign URLs before rendering, then retain an asset-binding manifest. This is deterministic correction of declared inputs, not creative regeneration.

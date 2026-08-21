@@ -9,14 +9,97 @@ from unittest.mock import patch
 
 from makaron_ad_creator.adapter import (
     MakaronAdapter,
+    bind_ad_remotion_assets,
+    extract_generated_image_urls,
     extract_generated_video_urls,
     extract_json_object,
     extract_remotion_design,
+    validate_ad_remotion_design,
 )
 from makaron_ad_creator.util import AdCreatorError
 
 
 class AdapterTests(unittest.TestCase):
+    def test_final_asset_binding_replaces_stale_persistent_project_bgm(self) -> None:
+        keys = ("comparisonImage", "hookVideo", "resultVideo", "workflowVideo", "ctaVideo", "bgmUrl")
+        design = {
+            "code": " ".join(keys),
+            "props": {key: f"https://old.example.com/{key}" for key in keys},
+        }
+        changes = bind_ad_remotion_assets(
+            design,
+            comparison_image="https://new.example.com/comparison.png",
+            videos=[
+                "https://new.example.com/hook.mp4",
+                "https://new.example.com/result.mp4",
+                "https://new.example.com/workflow.mp4",
+                "https://new.example.com/cta.mp4",
+            ],
+            bgm_url="https://new.example.com/bgm.wav",
+        )
+        self.assertIn("bgmUrl", changes)
+        self.assertEqual(design["props"]["bgmUrl"], "https://new.example.com/bgm.wav")
+        self.assertEqual(design["props"]["hookVideo"], "https://new.example.com/hook.mp4")
+
+    def test_generated_image_urls_exclude_uploaded_source_attachments(self) -> None:
+        response = {
+            "media_urls": ["https://example.com/uploaded-input.jpg"],
+            "output": [{"type": "text", "content": "no generated image"}],
+            "result": {"images": []},
+        }
+        self.assertEqual(extract_generated_image_urls(response), [])
+
+    def test_chat_passes_http_media_urls_without_turning_them_into_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            raw = {"text": "ok"}
+            with patch("makaron_ad_creator.adapter.run", return_value=SimpleNamespace(stdout=json.dumps(raw), stderr="", returncode=0)) as mocked_run:
+                adapter.chat(
+                    node_id="url-inputs",
+                    prompt="compose",
+                    images=["https://cdn.example.com/comparison.png"],
+                    videos=["https://cdn.example.com/effect.mp4"],
+                    audios=["https://cdn.example.com/bgm.mp3"],
+                )
+            command = mocked_run.call_args.args[0]
+            self.assertIn("https://cdn.example.com/comparison.png", command)
+            self.assertIn("https://cdn.example.com/effect.mp4", command)
+            self.assertIn("https://cdn.example.com/bgm.mp3", command)
+
+    def test_publish_local_media_uses_backend_upload_and_hash_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            source = root / "workflow.mp4"
+            source.write_bytes(b"video")
+            adapter = MakaronAdapter("project-1", root / "campaign" / "run", str(fake))
+            uploaded = SimpleNamespace(
+                stdout="✅ Uploaded: https://cdn.makaron.app/storage/v1/object/public/ad-creator/workflow.mp4\n",
+                stderr="",
+                returncode=0,
+            )
+            with patch("makaron_ad_creator.adapter.run", return_value=uploaded) as mocked_run:
+                first = adapter.publish_local_media(source, role="workflow-en")
+                second = adapter.publish_local_media(source, role="workflow-en")
+            self.assertEqual(first, second)
+            self.assertEqual(mocked_run.call_count, 1)
+            command = mocked_run.call_args.args[0]
+            self.assertEqual(command[1:3], ["admin", "upload"])
+            self.assertIn("workflow-en-", command[-1])
+
+    def test_generated_image_urls_accept_authoritative_result_image(self) -> None:
+        response = {
+            "output": [{"type": "image", "url": "https://example.com/after.png"}],
+            "result": {"images": [{"imageUrl": "https://example.com/after.png"}]},
+        }
+        self.assertEqual(extract_generated_image_urls(response), ["https://example.com/after.png"])
+
     def test_generated_video_urls_exclude_uploaded_source_attachments(self) -> None:
         response = {
             "media_urls": ["https://example.com/uploaded-cta.mp4"],
@@ -40,6 +123,55 @@ class AdapterTests(unittest.TestCase):
             "animation": {"fps": 30, "durationInSeconds": 18},
         }
         self.assertEqual(extract_remotion_design({"result": {"designs": [design]}}), design)
+
+    def test_remotion_contract_rejects_caption_crossing_scene_boundary(self) -> None:
+        scenes = {
+            "hook": {"startMs": 0, "endMs": 2500},
+            "comparison": {"startMs": 2500, "endMs": 5000},
+            "workflow": {"startMs": 5000, "endMs": 9000},
+            "result": {"startMs": 9000, "endMs": 15000},
+            "cta": {"startMs": 15000, "endMs": 18000},
+        }
+        captions = [
+            {"text": str(index), "startMs": start, "endMs": end, "timestampMs": start, "confidence": 1}
+            for index, (start, end) in enumerate(((100, 2000), (3900, 6100), (5100, 6500), (6600, 8500), (9200, 14000)))
+        ]
+        design = {
+            "props": {
+                "compositionContractVersion": 2,
+                "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 270, "maxCharactersPerLine": 20},
+                "captions": captions,
+                "scenes": scenes,
+                "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
+            }
+        }
+        with self.assertRaisesRegex(AdCreatorError, "crosses.*comparison"):
+            validate_ad_remotion_design(design)
+
+    def test_remotion_contract_normalizes_scene_array(self) -> None:
+        scenes = [
+            {"id": "hook", "startMs": 0, "endMs": 2500},
+            {"id": "comparison", "startMs": 2500, "endMs": 5000},
+            {"id": "workflow", "startMs": 5000, "endMs": 9000},
+            {"id": "result", "startMs": 9000, "endMs": 15000},
+            {"id": "cta", "startMs": 15000, "endMs": 18000},
+        ]
+        captions = [
+            {"text": str(index), "startMs": start, "endMs": end, "timestampMs": start, "confidence": 1}
+            for index, (start, end) in enumerate(((100, 2000), (2700, 4700), (5100, 6500), (6600, 8500), (9200, 14000)))
+        ]
+        design = {
+            "props": {
+                "compositionContractVersion": 2,
+                "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 270, "maxCharactersPerLine": 20},
+                "captions": captions,
+                "scenes": scenes,
+                "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
+            }
+        }
+        validate_ad_remotion_design(design)
+        self.assertIsInstance(design["props"]["scenes"], dict)
+        self.assertEqual(design["props"]["scenes"]["result"]["startMs"], 9000)
 
     def test_final_chat_rejects_source_video_when_export_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

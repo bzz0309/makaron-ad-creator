@@ -3,3 +3,6 @@ __pycache__
 *.pyo
 *.pyd
 .DS_Store
+*.egg-info/
+.venv/
+skills/makaron-ad-creator/scripts/makaron_ad_creator.egg-info/

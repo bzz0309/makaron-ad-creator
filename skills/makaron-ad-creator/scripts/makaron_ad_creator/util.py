@@ -155,13 +155,13 @@ def download(url: str, destination: Path) -> Path:
                 "--max-time",
                 "600",
                 "--user-agent",
-                "makaron-ad-creator/0.5.1",
+                "makaron-ad-creator/0.6.0",
                 "--output",
                 str(temp_path),
                 url,
             ], timeout=660)
         else:
-            request = urllib.request.Request(url, headers={"User-Agent": "makaron-ad-creator/0.5.1"})
+            request = urllib.request.Request(url, headers={"User-Agent": "makaron-ad-creator/0.6.0"})
             with urllib.request.urlopen(request, timeout=120) as response, temp_path.open("wb") as handle:
                 shutil.copyfileobj(response, handle)
     except Exception as exc:

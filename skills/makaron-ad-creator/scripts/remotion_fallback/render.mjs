@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {bundle} from '@remotion/bundler';
 import {ensureBrowser, renderMedia, selectComposition} from '@remotion/renderer';
 
-const [designFile, outputFile] = process.argv.slice(2);
+const [designFile, outputFile, contract = 'ad-final'] = process.argv.slice(2);
 if (!designFile || !outputFile) {
   throw new Error('Usage: render.mjs <design.json> <output.mp4>');
 }
@@ -27,7 +27,9 @@ if (!code.includes('function Composition') || code.length > 250_000) {
 if (![width, height, fps, durationInSeconds, durationInFrames].every(Number.isFinite)) {
   throw new Error('The Makaron Remotion design has invalid dimensions or timing.');
 }
-if (width !== 1080 || height !== 1920 || fps !== 30 || durationInSeconds < 15 || durationInSeconds > 20) {
+const isVertical916 = Math.abs(width / height - 9 / 16) <= 0.01;
+const durationValid = contract === 'ad-final' && durationInSeconds >= 15 && durationInSeconds <= 20;
+if (width < 720 || height < 1280 || !isVertical916 || fps !== 30 || !durationValid) {
   throw new Error(`Refusing unexpected Remotion contract: ${width}x${height}, ${fps}fps, ${durationInSeconds}s`);
 }
 

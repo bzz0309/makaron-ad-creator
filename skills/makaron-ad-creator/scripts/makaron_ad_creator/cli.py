@@ -209,7 +209,13 @@ def command_status(args: argparse.Namespace) -> int:
 
 def command_complete(args: argparse.Namespace) -> int:
     pipeline = Pipeline(Path(args.campaign), executor="agent")
-    pipeline.complete_agent_node(args.node, Path(args.artifact), args.response_id, args.source_url)
+    pipeline.complete_agent_node(
+        args.node,
+        Path(args.artifact),
+        args.response_id,
+        args.source_url,
+        Path(args.timing_manifest) if args.timing_manifest else None,
+    )
     print(json.dumps({"status": "PASS", "node": args.node, "state": str(pipeline.state_path)}, indent=2))
     return 0
 
@@ -315,6 +321,7 @@ def parser() -> argparse.ArgumentParser:
     complete.add_argument("--artifact", required=True)
     complete.add_argument("--response-id")
     complete.add_argument("--source-url", help="Original HTTP(S) media URL; recommended for BGM longer than local chat upload limits")
+    complete.add_argument("--timing-manifest", help="Required for final-* nodes: Remotion Caption/scene contract v2 JSON sidecar")
     complete.set_defaults(func=command_complete)
 
     fail = sub.add_parser("fail", help="Report a failed Agent request and advance its retry budget")

@@ -1,6 +1,6 @@
 {
   "name": "makaron-ad-creator-cli",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Portable one-image to selected-locale Makaron ad creator CLI for AI agents",
   "type": "module",
   "bin": {
@@ -17,7 +17,7 @@
     "@remotion/bundler": "4.0.506",
     "@remotion/media": "4.0.506",
     "@remotion/renderer": "4.0.506",
-    "makaron-cli": "^0.13.4",
+    "makaron-cli": "^0.13.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "remotion": "4.0.506"
