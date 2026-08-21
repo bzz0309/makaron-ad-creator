@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from PIL import Image
 
-from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
+from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable, normalize_near_vertical_resolution
 from makaron_ad_creator.cli import main
 from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
@@ -489,6 +489,25 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(is_vertical_resolution_acceptable({"width": 720, "height": 1280}, output))
         self.assertFalse(is_vertical_resolution_acceptable({"width": 540, "height": 960}, output))
         self.assertFalse(is_vertical_resolution_acceptable({"width": 1280, "height": 720}, output))
+
+    def test_near_720p_vertical_result_is_padded_to_minimum(self) -> None:
+        source = self.root / "near-vertical.mp4"
+        source.write_bytes(b"source")
+        normalized = source.with_name("near-vertical.normalized.mp4")
+
+        def fake_run(command: list[str], timeout: int = 600):
+            normalized.write_bytes(b"normalized")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        probes = [
+            {"width": 720, "height": 1264},
+        ]
+        with patch("makaron_ad_creator.media.probe_video", side_effect=probes), \
+             patch("makaron_ad_creator.media.require_binary", return_value="ffmpeg"), \
+             patch("makaron_ad_creator.media.run", side_effect=fake_run):
+            changed = normalize_near_vertical_resolution(source, {"minimum_width": 720, "minimum_height": 1280})
+        self.assertTrue(changed)
+        self.assertEqual(source.read_bytes(), b"normalized")
 
     def test_agent_fail_advances_attempt_and_blocks_at_budget(self) -> None:
         path = self.make_campaign()

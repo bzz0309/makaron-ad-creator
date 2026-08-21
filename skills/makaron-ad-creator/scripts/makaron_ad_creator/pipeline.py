@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
-from .media import bgm_similarity_in_cta, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, probe_audio, probe_image, probe_video
+from .media import bgm_similarity_in_cta, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
 from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
 from .util import AdCreatorError, read_json, run as run_command, sha256, write_json
@@ -292,9 +292,12 @@ class Pipeline:
             destination=output,
         )
         info = probe_video(output)
+        normalized = normalize_near_vertical_resolution(output, self.config["output"])
+        if normalized:
+            info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError("Effect video must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("effect", output, response_id=result.get("response_id"), source_url=result.get("source_url"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}")
+        self.add_artifact("effect", output, response_id=result.get("response_id"), source_url=result.get("source_url"), model=MODELS[min(attempt - 1, 2)], resolution=f"{info['width']}x{info['height']}", resolution_normalized=normalized)
 
     def _derive_effect_segment(self, role: str) -> None:
         if role not in {"hook", "result"}:

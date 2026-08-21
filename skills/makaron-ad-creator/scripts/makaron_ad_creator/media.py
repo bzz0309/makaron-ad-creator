@@ -243,3 +243,47 @@ def is_vertical_resolution_acceptable(info: dict[str, Any], output: dict[str, An
     if width < minimum_width or height < minimum_height:
         return False
     return abs((width / height) - (9 / 16)) <= 0.01
+
+
+def normalize_near_vertical_resolution(video: Path, output: dict[str, Any]) -> bool:
+    """Pad a provider's near-9:16 720p result when it is only a few pixels short."""
+    info = probe_video(video)
+    if is_vertical_resolution_acceptable(info, output):
+        return False
+    width = int(info.get("width", 0))
+    height = int(info.get("height", 0))
+    minimum_width = max(720, int(output.get("minimum_width", 720)))
+    minimum_height = max(1280, int(output.get("minimum_height", 1280)))
+    if (
+        width < minimum_width
+        or height < round(minimum_height * 0.98)
+        or abs((width / max(height, 1)) - (9 / 16)) > 0.015
+    ):
+        return False
+    ffmpeg = require_binary("ffmpeg")
+    normalized = video.with_name(f"{video.stem}.normalized{video.suffix}")
+    run([
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(video),
+        "-vf",
+        f"scale={minimum_width}:{minimum_height}:force_original_aspect_ratio=decrease,pad={minimum_width}:{minimum_height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1",
+        "-an",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        str(normalized),
+    ], timeout=600)
+    normalized.replace(video)
+    return True
