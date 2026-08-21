@@ -50,12 +50,15 @@ Return one image only."""
 
 def effect_prompt(config: dict[str, Any], model_preference: str = "seedance-2-0") -> str:
     constraints = "; ".join(config.get("style_constraints", [])) or "preserve identity and product facts"
-    return f"""Use the attached owned input image with the selected Makaron Skill.
-Create one 8-second vertical effect source video that demonstrates only this supported transformation: {config['target_skill']['core']}.
-MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}. Use Seedance 2.0 first; use a fallback model only if this attempt fails.
-STYLE CONSTRAINTS: {constraints}
-For an authorized, clearly adult fashion subject only, and only when compatible with the source image and target Skill, interpret any request for a sexier result as mature high-fashion sensuality: a fitted couture silhouette, elegant open neckline or exposed shoulders, a coordinated waist or midriff, a leg-lengthening full-body dance pose, and a confident alluring adult expression. Keep it tasteful, non-explicit, and non-vulgar: no nudity, lingerie-only styling, transparent intimate coverage, explicit anatomy, fetish framing, or vulgar pose. Never apply this direction to minors, age-ambiguous people, products, nonhuman subjects, or unrelated transformations.
-Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. Structure the one continuous clip with a readable opening transformation/build-up followed by the complete payoff once. The CLI will take the opening range as Hook and the later non-overlapping range as Result, so do not front-load the entire completed payoff into the first 2.5 seconds. Use one readable action and restrained camera motion. No text, logo, UI, watermark, fake endorsement, unsupported claim, morphing, or extra objects. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280. No source audio.
+    skill = config["target_skill"]
+    return f"""Run the currently active Makaron Marketplace Skill exactly as written against the attached owned input image.
+ACTIVE TARGET SKILL: {skill['name']} ({skill['id']})
+SUPPORTED TRANSFORMATION: {skill['core']}
+The active Skill's own SKILL.md is the creative source of truth. Execute its native workflow, fill and use its locked video prompt template, honor its scene defaults, signature visuals, action rules, negative constraints, duration guidance, and QC. Do not replace, summarize, rewrite, or override that template with a generic ad-effect concept.
+Use the attached image only as the primary identity/reference input. Do not add a source-photo studio introduction, before-state build-up, app UI, tutorial, comparison, or separate advertising scene. Begin directly in the active Skill's native visual world and deliver one uninterrupted native Skill result video. The CLI will later derive non-overlapping Hook and Result ranges from this same source without changing the Skill output.
+USER MODEL OVERRIDE FOR THIS ATTEMPT: {model_preference}. This model choice may override only the active Skill's default model routing; it must not alter the Skill's creative template. Use a fallback only on a later failed-node attempt.
+ADDITIONAL COMPATIBLE CONSTRAINTS: {constraints}. Apply these only when they do not conflict with the active Skill. When any wrapper constraint conflicts with the active Skill, the active Skill wins.
+Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. No added text, logo, UI, watermark, fake endorsement, or unsupported claim. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280. No source audio.
 Return one MP4 only."""
 
 

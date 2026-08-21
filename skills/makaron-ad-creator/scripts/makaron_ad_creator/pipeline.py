@@ -14,7 +14,7 @@ from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_
 from .util import AdCreatorError, read_json, run as run_command, sha256, write_json
 
 
-MODELS = ["seedance-2-0", "kling", "grok"]
+MODELS = ["seedance-2-0", "seedance-fast", "grok"]
 MAX_MAKARON_UPLOAD_BYTES = 4 * 1024 * 1024
 
 
