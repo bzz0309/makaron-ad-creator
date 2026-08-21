@@ -33,7 +33,7 @@ TRANSFORMATION TYPE: {skill.get('transformation_type', 'identity')}
 Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 Open Makaron; 4 Use the template; 5 emotional result.
 Apply these locale rules:
 {locale_rules}
-Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
+Line 1 must be a genuine curiosity or surprising-result Hook, not merely the Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
 Return this exact shape: {json.dumps(exact_shape, ensure_ascii=False)}"""
 
 
@@ -54,7 +54,7 @@ def effect_prompt(config: dict[str, Any], model_preference: str = "seedance-2-0"
 Create one 8-second vertical effect source video that demonstrates only this supported transformation: {config['target_skill']['core']}.
 MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}. Use Seedance 2.0 first; use a fallback model only if this attempt fails.
 STYLE CONSTRAINTS: {constraints}
-For an authorized, clearly adult fashion subject only, and only when compatible with the source image and target Skill, use elegant glamorous styling such as an open neckline or exposed shoulders and a coordinated midriff silhouette; a fuller shot may show the legs. Keep it non-explicit and non-vulgar. Never apply this direction to minors, age-ambiguous people, products, nonhuman subjects, or unrelated transformations.
+For an authorized, clearly adult fashion subject only, and only when compatible with the source image and target Skill, interpret any request for a sexier result as mature high-fashion sensuality: a fitted couture silhouette, elegant open neckline or exposed shoulders, a coordinated waist or midriff, a leg-lengthening full-body dance pose, and a confident alluring adult expression. Keep it tasteful, non-explicit, and non-vulgar: no nudity, lingerie-only styling, transparent intimate coverage, explicit anatomy, fetish framing, or vulgar pose. Never apply this direction to minors, age-ambiguous people, products, nonhuman subjects, or unrelated transformations.
 Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. Structure the one continuous clip with a readable opening transformation/build-up followed by the complete payoff once. The CLI will take the opening range as Hook and the later non-overlapping range as Result, so do not front-load the entire completed payoff into the first 2.5 seconds. Use one readable action and restrained camera motion. No text, logo, UI, watermark, fake endorsement, unsupported claim, morphing, or extra objects. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280. No source audio.
 Return one MP4 only."""
 

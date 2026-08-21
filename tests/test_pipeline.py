@@ -11,8 +11,8 @@ from PIL import Image
 
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable
 from makaron_ad_creator.cli import main
-from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for, scripts_for_final
-from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt
+from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
+from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -189,6 +189,10 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("one 8-second vertical effect source", effect)
         self.assertIn("opening range as Hook", effect)
         self.assertIn("never below 720x1280", effect)
+        self.assertIn("mature high-fashion sensuality", effect)
+        scripts_prompt = script_prompt(config)
+        self.assertIn("not merely the Skill name", scripts_prompt)
+        self.assertIn("under 1.8 seconds", scripts_prompt)
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
@@ -389,12 +393,6 @@ class PipelineTests(unittest.TestCase):
 
     def test_payload_too_large_is_not_retried(self) -> None:
         self.assertTrue(is_non_retryable_error(AdCreatorError("Error 413: Request Entity Too Large")))
-
-    def test_short_hook_uses_compact_locale_voiceover(self) -> None:
-        scripts = {"en": ["One photo—then, crystal ballet.", "two", "three", "four", "five"]}
-        prepared = scripts_for_final(scripts, "en", hook_duration=2.041667)
-        self.assertEqual(prepared["en"][0], "Crystal Ballet.")
-        self.assertEqual(scripts["en"][0], "One photo—then, crystal ballet.")
 
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()

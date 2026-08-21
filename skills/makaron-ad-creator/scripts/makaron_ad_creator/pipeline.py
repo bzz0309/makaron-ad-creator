@@ -51,23 +51,6 @@ def is_non_retryable_error(exc: Exception) -> bool:
     ))
 
 
-def scripts_for_final(
-    scripts: dict[str, list[str]],
-    locale: str,
-    *,
-    hook_duration: float,
-) -> dict[str, list[str]]:
-    """Fit the opening VO to a short derived Hook without extending its frames."""
-    prepared = {key: list(lines) for key, lines in scripts.items()}
-    if hook_duration < 2.4:
-        prepared[locale][0] = {
-            "en": "Crystal Ballet.",
-            "ja": "クリスタルバレエ。",
-            "yue": "水晶芭蕾。",
-        }[locale]
-    return prepared
-
-
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -512,11 +495,7 @@ class Pipeline:
         return self._adapter().publish_local_media(path, role=role)
 
     def _generate_final(self, locale: str, attempt: int) -> None:
-        scripts = scripts_for_final(
-            read_json(self.artifact("scripts")),
-            locale,
-            hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
-        )
+        scripts = read_json(self.artifact("scripts"))
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
         videos = self._final_video_inputs(locale)
         comparison_input = self._final_image_input("comparison", self.artifact("comparison"), role="comparison")
@@ -760,12 +739,7 @@ class Pipeline:
         (delivery / "qc_report.md").write_text("\n".join(qc_lines), encoding="utf-8")
         shutil.copy2(self.campaign_dir / "plan.json", delivery / "plan.json")
         shutil.copy2(self.campaign_dir / "project-binding.json", delivery / "project-binding.json")
-        source_scripts = read_json(self.artifact("scripts"))
-        delivered_scripts = {
-            locale: self.state["nodes"][f"final-{locale}"]["artifacts"][0].get("voiceover_script", source_scripts[locale])
-            for locale in ad_locales(self.config)
-        }
-        write_json(delivery / "scripts.json", delivered_scripts)
+        shutil.copy2(self.artifact("scripts"), delivery / "scripts.json")
         review_rows = ["locale,technical_status,human_creative_review,publication_status"]
         review_rows.extend(f"{locale},PASS,PENDING,PAUSED" for locale in ad_locales(self.config))
         (delivery / "review.csv").write_text("\n".join(review_rows) + "\n", encoding="utf-8")
@@ -836,11 +810,7 @@ class Pipeline:
             })
         elif node_id.startswith("final-"):
             locale = node_id.split("-", 1)[1]
-            scripts = scripts_for_final(
-                read_json(self.artifact("scripts")),
-                locale,
-                hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
-            )
+            scripts = read_json(self.artifact("scripts"))
             videos = self._final_video_inputs(locale)
             request.update({
                 "operation": "assemble_localized_ad",
