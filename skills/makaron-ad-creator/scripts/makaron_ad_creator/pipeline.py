@@ -268,6 +268,8 @@ class Pipeline:
             lines = scripts.get(locale)
             if not isinstance(lines, list) or len(lines) != 5 or not all(isinstance(line, str) and line.strip() for line in lines):
                 raise AdCreatorError(f"scripts.{locale} must contain exactly five non-empty strings")
+            if self.config["target_skill"]["name"].casefold() in lines[0].casefold():
+                raise AdCreatorError(f"scripts.{locale}[0] must be a result-driven Hook and must not repeat the Skill name")
 
     def _generate_before(self) -> None:
         output = self.run_dir / "assets" / "before.png"

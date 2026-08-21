@@ -191,7 +191,7 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("never below 720x1280", effect)
         self.assertIn("mature high-fashion sensuality", effect)
         scripts_prompt = script_prompt(config)
-        self.assertIn("not merely the Skill name", scripts_prompt)
+        self.assertIn("must not say or repeat the exact Skill name", scripts_prompt)
         self.assertIn("under 1.8 seconds", scripts_prompt)
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
@@ -393,6 +393,13 @@ class PipelineTests(unittest.TestCase):
 
     def test_payload_too_large_is_not_retried(self) -> None:
         self.assertTrue(is_non_retryable_error(AdCreatorError("Error 413: Request Entity Too Large")))
+
+    def test_script_hook_rejects_exact_skill_name(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        pipeline.config["locales"] = [{"ad_locale": "en", "ui_locale": "en"}]
+        with self.assertRaisesRegex(AdCreatorError, "must not repeat the Skill name"):
+            pipeline._validate_scripts({"en": ["One photo. Example.", "two", "Open Makaron.", "Use the template.", "five"]})
 
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()

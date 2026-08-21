@@ -33,7 +33,7 @@ TRANSFORMATION TYPE: {skill.get('transformation_type', 'identity')}
 Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 Open Makaron; 4 Use the template; 5 emotional result.
 Apply these locale rules:
 {locale_rules}
-Line 1 must be a genuine curiosity or surprising-result Hook, not merely the Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
+Line 1 must be a genuine curiosity or surprising-result Hook, must not say or repeat the exact Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
 Return this exact shape: {json.dumps(exact_shape, ensure_ascii=False)}"""
 
 
