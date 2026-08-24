@@ -154,6 +154,7 @@ def download(url: str, destination: Path) -> Path:
             run([
                 curl,
                 "--fail",
+                "--http1.1",
                 "--location",
                 "--silent",
                 "--show-error",

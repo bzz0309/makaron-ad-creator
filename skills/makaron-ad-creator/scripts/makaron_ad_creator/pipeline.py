@@ -46,6 +46,8 @@ def is_non_retryable_error(exc: Exception) -> bool:
     return any(marker in message for marker in (
         "request entity too large",
         "function_payload_too_large",
+        "insufficient_credits",
+        "cannot download generated artifact",
         "returned no exported final mp4",
         "unsupported locale",
         "unknown node",
@@ -333,7 +335,6 @@ class Pipeline:
         result = self._adapter().chat(
             node_id="before",
             prompt=before_prompt(self.config),
-            images=[Path(self.config["input_image"])],
             destination=output,
             require_generated_image=True,
         )
@@ -345,7 +346,6 @@ class Pipeline:
             node_id="effect",
             prompt=effect_prompt(self.config, MODELS[min(attempt - 1, len(MODELS) - 1)]),
             skill_id=self.config["target_skill"]["id"],
-            images=[Path(self.config["input_image"])],
             destination=output,
         )
         info = probe_video(output)
@@ -863,9 +863,9 @@ class Pipeline:
         if node_id == "scripts":
             request.update({"operation": "generate_json", "prompt": script_prompt(self.config), "expected": "scripts.json"})
         elif node_id == "before":
-            request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [self.config["input_image"]], "expected": "before.png"})
+            request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [], "project_media_refs": ["<<<media_1>>>"], "expected": "before.png"})
         elif node_id == "effect":
-            request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
+            request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [], "project_media_refs": ["<<<media_1>>>"], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "after":
             request.update({
                 "operation": "select_exact_effect_keyframe",

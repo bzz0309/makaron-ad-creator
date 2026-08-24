@@ -37,6 +37,7 @@ class UtilTests(unittest.TestCase):
             command = mocked_run.call_args.args[0]
             self.assertIn("--retry", command)
             self.assertIn("--fail", command)
+            self.assertIn("--http1.1", command)
 
 
 if __name__ == "__main__":

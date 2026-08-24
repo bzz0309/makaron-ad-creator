@@ -14,8 +14,8 @@ LOCALE_RULES = {
 
 LOCALE_NAMES = {"en": "English", "ja": "Japanese", "yue": "Hong Kong Cantonese"}
 SCRIPT_ANCHORS = {
-    "en": ["...", "...", "Open Makaron.", "Use the template.", "..."],
-    "ja": ["...", "...", "Makaronを開いて。", "テンプレートを使って。", "..."],
+    "en": ["...", "...", "Open Makaron.", "Pick this effect.", "..."],
+    "ja": ["...", "...", "Makaronを開いて。", "この効果を選んで。", "..."],
     "yue": ["...", "...", "打開 Makaron。", "揀呢個效果。", "..."],
 }
 
@@ -30,7 +30,7 @@ def script_prompt(config: dict[str, Any]) -> str:
 TARGET SKILL NAME: {skill['name']}
 TARGET SKILL CORE: {skill['core']}
 TRANSFORMATION TYPE: {skill.get('transformation_type', 'identity')}
-Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 Open Makaron; 4 Use the template; 5 emotional result.
+Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 Open Makaron; 4 select the effect; 5 emotional result.
 Apply these locale rules:
 {locale_rules}
 Line 1 must be a genuine curiosity or surprising-result Hook, must not say or repeat the exact Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
@@ -38,7 +38,7 @@ Return this exact shape: {json.dumps(exact_shape, ensure_ascii=False)}"""
 
 
 def before_prompt(config: dict[str, Any]) -> str:
-    return f"""Use the attached owned input image as the identity and geometry source.
+    return f"""Use the existing bound-project image 1 (<<<media_1>>>) as the owned identity and geometry source. It is the exact input image uploaded when this isolated project was created; do not ask for or upload another copy.
 Create one realistic, ordinary, unpolished starting-state vertical phone photo for an advertising comparison.
 SUBJECT: {config['subject_description']}
 Keep the overall scene naturally bright and normally exposed: not dark, underexposed, grey, or low-key graded.
@@ -51,11 +51,11 @@ Return one image only."""
 def effect_prompt(config: dict[str, Any], model_preference: str = "seedance-2-0") -> str:
     constraints = "; ".join(config.get("style_constraints", [])) or "preserve identity and product facts"
     skill = config["target_skill"]
-    return f"""Run the currently active Makaron Marketplace Skill exactly as written against the attached owned input image.
+    return f"""Run the currently active Makaron Marketplace Skill exactly as written against the existing bound-project image 1 (<<<media_1>>>). It is the exact owned input uploaded when this isolated project was created; do not ask for or upload another copy.
 ACTIVE TARGET SKILL: {skill['name']} ({skill['id']})
 SUPPORTED TRANSFORMATION: {skill['core']}
 The active Skill's own SKILL.md is the creative source of truth. Execute its native workflow, fill and use its locked video prompt template, honor its scene defaults, signature visuals, action rules, negative constraints, duration guidance, and QC. Do not replace, summarize, rewrite, or override that template with a generic ad-effect concept.
-Use the attached image only as the primary identity/reference input. Do not add a source-photo studio introduction, before-state build-up, app UI, tutorial, comparison, or separate advertising scene. Begin directly in the active Skill's native visual world and deliver one uninterrupted native Skill result video. The CLI will later derive non-overlapping Hook and Result ranges from this same source without changing the Skill output.
+Use <<<media_1>>> only as the primary identity/reference input. Do not add a source-photo studio introduction, before-state build-up, app UI, tutorial, comparison, or separate advertising scene. Begin directly in the active Skill's native visual world and deliver one uninterrupted native Skill result video. The CLI will later derive non-overlapping Hook and Result ranges from this same source without changing the Skill output.
 USER MODEL OVERRIDE FOR THIS ATTEMPT: {model_preference}. This model choice may override only the active Skill's default model routing; it must not alter the Skill's creative template. Use a fallback only on a later failed-node attempt.
 ADDITIONAL COMPATIBLE CONSTRAINTS: {constraints}. Apply these only when they do not conflict with the active Skill. When any wrapper constraint conflicts with the active Skill, the active Skill wins.
 Preserve identity, age, skin tone, facial structure, body proportions, product geometry, labels, and factual capabilities. No added text, logo, UI, watermark, fake endorsement, or unsupported claim. Exact aspect ratio 9:16; target 1080x1920 and never below 720x1280. No source audio.
@@ -123,7 +123,7 @@ REMOTION TIMING CONTRACT: create the Seed Audio narration first, obtain real wor
 If the runtime returns an editable Remotion design, its props must include compositionContractVersion: 2, captions: Caption[], scenes either as an object keyed by hook/comparison/workflow/result/cta or as an array of {{id,startMs,endMs}} objects, lineSceneMap: ["hook", "comparison", "workflow", "workflow", "result"], and safeZone with the exact Meta inset values below. Regardless of representation, set result.startMs no later than caption 5 startMs so line 5 never begins over workflow.
 META SAFE ZONE: treat the insets as canvas-relative ratios, not fixed 1080p pixel coordinates. On the required {output['width']}x{output['height']} composition they resolve to x={safe['left_px']}..{output['width'] - safe['right_px']} and y={safe['top_px']}..{output['height'] - safe['bottom_px']}. Set the subtitle container's CSS top to exactly y={safe['caption_top_px']}; do not add an extra top offset, padding, Math.max(... + offset), or vertical centering. If any runtime preview uses another 9:16 size, recompute every pixel inset from the ratios before layout so captions and faces never drift or clip. The Meta profile overrides the older 140px top-caption convention because 140px lies under account UI.
 Serialize props.safeZone with topRatio={safe_ratios['top']:.6f}, bottomRatio={safe_ratios['bottom']:.6f}, leftRatio={safe_ratios['left']:.6f}, rightRatio={safe_ratios['right']:.6f}, captionTopRatio={safe_ratios['caption_top']:.6f}, plus topPx/bottomPx/leftPx/rightPx/captionTopPx dynamically calculated from the actual composition dimensions, and maxCharactersPerLine={safe['max_characters_per_line']}.
-Burn exactly one synchronized subtitle set for every spoken line: white text with black stroke/outline, no black box or background bar, horizontally centered inside the full safe content width with textAlign:'center' and centered flex alignment, never left-aligned or shifted toward either rail. Prefer one physical line for every caption. Use whiteSpace:'nowrap' and choose a responsive font size in the 42-56px range so any line of at most {safe['max_characters_per_line']} visible characters fits between the left and right safe insets. Only wrap to a maximum of two lines when a longer localized line still cannot fit legibly at 42px. Caption text/display must not contain literal backslash-n or hard-coded newline characters. English subtitles are uppercase; Japanese and Cantonese retain natural case. Do not add duplicate subtitles, title-card captions, or overlapping text layers. Measure text width before rendering and reduce font size before considering a wrap.
+Burn exactly one synchronized subtitle set for every spoken line: white text with black stroke/outline, no black box or background bar, horizontally centered inside the full safe content width with textAlign:'center' and centered flex alignment, never left-aligned or shifted toward either rail. Prefer one physical line for every caption. First measure text width and responsively reduce font size within 42-56px so a line of at most {safe['max_characters_per_line']} visible characters fits between the safe insets. If a longer localized caption still requires two lines at 42px, use a measured balanced wrap at the word or phrase boundary closest to half of the rendered width. For English captions of six or more words, each wrapped line must contain at least three words; never leave an orphan line of only one or two words. For Japanese and Cantonese, keep the two rendered line widths visually balanced rather than leaving one very short fragment. Use CSS text-wrap:balance when supported and an equivalent measured split otherwise. Caption text values must not contain literal backslash-n or hard-coded newline characters; line layout belongs to the renderer. English subtitles are uppercase; Japanese and Cantonese retain natural case. Do not add duplicate subtitles, title-card captions, or overlapping text layers.
 Return a {final_min:.1f}-{final_max:.1f} second five-part final video, aiming for {final_preferred:.1f} seconds but choosing the shortest duration that keeps the mechanism and spoken lines clear. Build, time-align, subtitle, mix, and export the complete video through Remotion inside this one chat run; do not ask the CLI to perform local FFmpeg concat, amix, ASS subtitle rendering, edge-tts, or PIL final composition. Publishing an editable draft, design, snapshot, contact sheet, source file, or QC note is not completion. The response must contain a newly exported final MP4 in its generated video outputs/result.videos. If materialization reports a stale timeline pointer or Forbidden error, repair the published snapshot/design path and retry export inside this run; never return one of the attached source videos as the final result.
 SUPPORTED OFFER: {offer['value_proposition']}
 Do not invent prices, ratings, endorsements, urgency, or capabilities. No black frames. Target {output['width']}x{output['height']}, minimum {output['minimum_width']}x{output['minimum_height']}, 9:16, 30fps, H.264/AAC, within {final_min:.1f}-{final_max:.1f} seconds.

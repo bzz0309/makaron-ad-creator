@@ -12,7 +12,7 @@ from PIL import Image
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable, normalize_near_vertical_resolution
 from makaron_ad_creator.cli import _project_for_skill, main, project_binding_key, resolve_campaign_path
 from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
-from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
+from makaron_ad_creator.prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -186,7 +186,8 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("y=270", prompt)
         self.assertIn("at most 32 visible characters", prompt)
         self.assertIn("Prefer one physical line", prompt)
-        self.assertIn("whiteSpace:'nowrap'", prompt)
+        self.assertIn("measured balanced wrap", prompt)
+        self.assertIn("never leave an orphan line of only one or two words", prompt)
         self.assertIn("CSS top to exactly y=270", prompt)
         self.assertIn("horizontally centered inside the full safe content width", prompt)
         self.assertIn("must not contain literal backslash-n", prompt)
@@ -196,7 +197,10 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("minimum 720x1280", prompt)
         self.assertIn("do not ask the CLI to perform local FFmpeg", prompt)
         effect = effect_prompt(config)
+        self.assertIn("existing bound-project image 1 (<<<media_1>>>)", before_prompt(config))
+        self.assertIn("do not ask for or upload another copy", before_prompt(config))
         self.assertIn("seedance-2-0", effect)
+        self.assertIn("existing bound-project image 1 (<<<media_1>>>)", effect)
         self.assertIn("active Skill's own SKILL.md is the creative source of truth", effect)
         self.assertIn("fill and use its locked video prompt template", effect)
         self.assertIn("Do not add a source-photo studio introduction", effect)
@@ -211,6 +215,30 @@ class PipelineTests(unittest.TestCase):
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
+
+    def test_bound_project_source_image_is_reused_without_reupload(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="makaron")
+        adapter = Mock()
+
+        def create_output(**kwargs):
+            destination = Path(kwargs["destination"])
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"generated")
+            return {"response_id": f"response-{kwargs['node_id']}"}
+
+        adapter.chat.side_effect = create_output
+        with patch.object(pipeline, "_adapter", return_value=adapter), \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value={"width": 1080, "height": 1920, "duration": 8.0}), \
+             patch("makaron_ad_creator.pipeline.normalize_near_vertical_resolution", return_value=False):
+            pipeline._generate_before()
+            pipeline._generate_effect(1)
+
+        before_call, effect_call = adapter.chat.call_args_list
+        self.assertIsNone(before_call.kwargs.get("images"))
+        self.assertIsNone(effect_call.kwargs.get("images"))
+        self.assertIn("<<<media_1>>>", before_call.kwargs["prompt"])
+        self.assertIn("<<<media_1>>>", effect_call.kwargs["prompt"])
 
     def test_locale_voiceover_gain_is_validated_and_serialized(self) -> None:
         path = self.make_campaign()
@@ -521,6 +549,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_payload_too_large_is_not_retried(self) -> None:
         self.assertTrue(is_non_retryable_error(AdCreatorError("Error 413: Request Entity Too Large")))
+        self.assertTrue(is_non_retryable_error(AdCreatorError("Error 402: insufficient_credits")))
+        self.assertTrue(is_non_retryable_error(AdCreatorError("Cannot download generated artifact: curl failed")))
 
     def test_script_hook_rejects_exact_skill_name(self) -> None:
         path = self.make_campaign()
