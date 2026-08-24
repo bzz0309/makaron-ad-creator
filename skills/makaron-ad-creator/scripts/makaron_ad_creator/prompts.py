@@ -9,14 +9,14 @@ from .schema import ad_locales
 LOCALE_RULES = {
     "en": "Natural conversational US English. Keep every spoken line short and idiomatic.",
     "ja": "Natural conversational Japanese for Japan. Adapt the emotional register; do not translate literally.",
-    "yue": "Natural spoken Hong Kong Cantonese in Traditional Chinese. Avoid Mandarin-only phrasing.",
+    "yue": "Natural spoken Hong Kong Cantonese in Traditional Chinese. Use native Hong Kong pronunciation, never a Mandarin reading, and prefer unambiguous colloquial Cantonese wording.",
 }
 
 LOCALE_NAMES = {"en": "English", "ja": "Japanese", "yue": "Hong Kong Cantonese"}
 SCRIPT_ANCHORS = {
     "en": ["...", "...", "Open Makaron.", "Use the template.", "..."],
     "ja": ["...", "...", "Makaronを開いて。", "テンプレートを使って。", "..."],
-    "yue": ["...", "...", "打開 Makaron。", "使用模版。", "..."],
+    "yue": ["...", "...", "打開 Makaron。", "揀呢個效果。", "..."],
 }
 
 
@@ -97,6 +97,7 @@ def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[st
     final_preferred = float(output["preferred_duration_seconds"])
     final_max = float(output["duration_seconds"])
     bgm_volume = float(config["audio"]["bgm_volume"])
+    voiceover_volume = float(config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.0))
     safe = output["safe_zone"]
     safe_ratios = {
         "top": float(safe["top_ratio"]),
@@ -111,6 +112,7 @@ MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}
 LOCALIZATION RULE: {LOCALE_RULES[locale]}
 VOICEOVER SCRIPT: {json.dumps(lines, ensure_ascii=False)}
 Generate one continuous Seed Audio voiceover and read exactly those five lines, once, in order, using this target-locale voice profile: {tts_voice}. Do not read Skill descriptions, UI text, filenames, or production instructions. Complete every line before the Logo CTA begins; the CTA has no voiceover. The final spoken word must not be truncated.
+VOICEOVER MIX LEVEL: serialize props.voiceoverVolume={voiceover_volume:.2f} and apply that gain to the voiceover track only. Keep the BGM at its separately specified level; never use this gain on BGM or source video audio.
 If measured narration still exceeds its assigned scene, automatically shorten that line while preserving its meaning, regenerate the matching voice and subtitle text, and continue to export. Never extend, loop, freeze, or slow a source clip to fit narration, and never pause to ask the user a timing question.
 ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the opening Hook segment extracted from the target-Skill effect source; video 2 is the later non-overlapping Result segment from that exact same effect source; video 3 is the locale-correct v5 Makaron workflow; video 4 is the fixed Makaron Logo CTA source; audio 1 is the separately generated instrumental BGM.
 ASSET BINDING: this persistent project may contain media from older campaigns. The Remotion props must use the exact current attachments with these keys: comparisonImage=image 1 URL, hookVideo=video 1 URL, resultVideo=video 2 URL, workflowVideo=video 3 URL, ctaVideo=video 4 URL, bgmUrl=audio 1 URL. Never select an older project image, video, voice, or music asset by recency, filename, or visual similarity. Set the Remotion Composition itself to width={output['width']}, height={output['height']}, fps=30; never infer the composition size from the first attached video.

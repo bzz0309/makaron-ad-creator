@@ -133,6 +133,7 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["assets"]["logo_cta_excerpt_seconds"], 3.0)
         self.assertEqual(config["assets"]["logo_cta_start_seconds"], 0.0)
         self.assertEqual(config["audio"]["tts_voice"], "natural energetic young-adult female")
+        self.assertEqual(config["audio"]["tts_volume_by_locale"], {"en": 1.0, "ja": 1.0, "yue": 1.0})
         self.assertEqual(config["audio"]["bgm_volume"], 0.22)
         self.assertTrue(config["audio"]["mute_source_audio"])
         self.assertFalse(config["audio"]["cta_source_audio"])
@@ -164,6 +165,7 @@ class PipelineTests(unittest.TestCase):
         scripts = {"en": [f"line {index}" for index in range(5)]}
         prompt = final_prompt(config, "en", scripts)
         self.assertIn("natural energetic young-adult female", prompt)
+        self.assertIn("props.voiceoverVolume=1.00", prompt)
         self.assertIn("LOCKED FINAL ORDER", prompt)
         self.assertIn("Hook video", prompt)
         self.assertIn("comparison image", prompt)
@@ -204,9 +206,28 @@ class PipelineTests(unittest.TestCase):
         scripts_prompt = script_prompt(config)
         self.assertIn("must not say or repeat the exact Skill name", scripts_prompt)
         self.assertIn("under 1.8 seconds", scripts_prompt)
+        self.assertIn("揀呢個效果。", scripts_prompt)
+        self.assertIn("never a Mandarin reading", scripts_prompt)
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
+
+    def test_locale_voiceover_gain_is_validated_and_serialized(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["audio"]["tts_volume_by_locale"] = {"en": 1.0, "ja": 1.35, "yue": 1.0}
+        write_json(path, config)
+        validated = validate_config(read_json(path), path)
+        scripts = {"ja": [f"line {index}" for index in range(5)]}
+        prompt = final_prompt(validated, "ja", scripts)
+        self.assertIn("props.voiceoverVolume=1.35", prompt)
+        self.assertEqual(validated["audio"]["tts_volume_by_locale"]["ja"], 1.35)
+
+        config = read_json(path)
+        config["audio"]["tts_volume_by_locale"]["ja"] = 1.75
+        write_json(path, config)
+        with self.assertRaisesRegex(AdCreatorError, "tts_volume_by_locale.ja"):
+            validate_config(read_json(path), path)
 
     def test_completed_agent_final_is_preserved_without_local_postprocess(self) -> None:
         path = self.make_campaign()

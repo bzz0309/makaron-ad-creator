@@ -14,6 +14,7 @@
 - `automation.max_attempts`: maximum `3`.
 - `automation.builder_skill_id`: defaults to Makaron's built-in `tiktok-video` Remotion builder; an explicit compatible builder can override it.
 - `audio.tts_voice`: defaults to `natural energetic young-adult female`.
+- `audio.tts_volume_by_locale`: optional voiceover-only gain map for `en`, `ja`, and `yue`; defaults to `1.0` and accepts `0.5–1.5` without changing BGM volume.
 - `audio.bgm_prompt`: original instrumental direction for the campaign's one `makaron music create` node; defaults to at least 20 seconds, no vocals, no early fade-out, and loop-friendly.
 - `audio.bgm_style`: `--style` value for `makaron music create`.
 - `audio.bgm_volume`: Remotion relative mix volume under TTS, default `0.22` and maximum `0.5`.
@@ -27,7 +28,7 @@
 - `output.duration_seconds`: final maximum retained for backward compatibility, default `20`.
 - `output.width` / `output.height`: preferred export target `1080×1920`.
 - `output.minimum_width` / `output.minimum_height`: hard acceptance floor `720×1280` at 9:16.
-- `output.safe_zone`: default `meta-reels` overlay protection stored as both the 1080×1920 reference pixels and canvas-relative ratios: top `250/1920`, bottom `340/1920`, left `90/1080`, right `180/1080`, caption top `270/1920`, maximum `20` visible characters per line. Ratio fields are authoritative for layout at non-reference preview sizes; legacy pixel-only Campaigns remain readable.
+- `output.safe_zone`: default `meta-reels` overlay protection stored as both the 1080×1920 reference pixels and canvas-relative ratios: top `250/1920`, bottom `340/1920`, left `90/1080`, right `180/1080`, caption top `270/1920`, one-line-first layout with a maximum `32` visible characters before wrapping. Ratio fields are authoritative for layout at non-reference preview sizes; legacy pixel-only Campaigns remain readable.
 
 `catalog_json` remains available for offline/reproducible v5 workflow generation. By default the production DAG runs the bundled v5 synthetic renderer against live `makaron skills list --json` metadata, passing the resolved Skill ID and only the selected mapped UI locale.
 

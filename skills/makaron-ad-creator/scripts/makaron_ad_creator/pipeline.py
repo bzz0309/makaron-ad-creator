@@ -578,10 +578,12 @@ class Pipeline:
         cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
         cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
         cached_design = extract_remotion_design(cached_response) if cached_response else None
+        voiceover_volume = float(self.config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.0))
         cached_contract_valid = False
         caption_text_changes = 0
         if attempt == 1 and cached_design:
             try:
+                cached_design["props"]["voiceoverVolume"] = voiceover_volume
                 cached_binding_changes = bind_ad_remotion_assets(
                     cached_design,
                     comparison_image=comparison_input,
@@ -618,6 +620,7 @@ class Pipeline:
             final_design = extract_remotion_design(result.get("response"))
             if not final_design:
                 raise AdCreatorError("Final Remotion output is missing the required caption/scene timing contract")
+            final_design["props"]["voiceoverVolume"] = voiceover_volume
             binding_changes = bind_ad_remotion_assets(
                 final_design,
                 comparison_image=comparison_input,
@@ -638,6 +641,7 @@ class Pipeline:
             "workflowVideo": videos[2],
             "ctaVideo": videos[3],
             "bgmUrl": bgm_input,
+            "voiceoverVolume": voiceover_volume,
             "corrected_stale_props": binding_changes,
             "caption_text_values_sanitized": caption_text_changes,
         })
@@ -682,6 +686,7 @@ class Pipeline:
             caption_text_values_sanitized=caption_text_changes,
             render_fallback=result.get("render_fallback"),
             voiceover_script=scripts[locale],
+            voiceover_volume=voiceover_volume,
         )
 
     def _qc(self) -> None:

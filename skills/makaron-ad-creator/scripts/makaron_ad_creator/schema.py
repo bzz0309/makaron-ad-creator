@@ -220,6 +220,20 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
     if not 0 < bgm_volume <= 0.5:
         errors.append("audio.bgm_volume must be greater than 0 and at most 0.5")
     audio["bgm_volume"] = bgm_volume
+    raw_tts_volumes = audio.get("tts_volume_by_locale", {})
+    if not isinstance(raw_tts_volumes, dict):
+        errors.append("audio.tts_volume_by_locale must be an object")
+        raw_tts_volumes = {}
+    tts_volumes: dict[str, float] = {}
+    for locale in DEFAULT_AD_LOCALES:
+        try:
+            volume = float(raw_tts_volumes.get(locale, 1.0))
+        except (TypeError, ValueError):
+            volume = -1
+        if not 0.5 <= volume <= 1.5:
+            errors.append(f"audio.tts_volume_by_locale.{locale} must be between 0.5 and 1.5")
+        tts_volumes[locale] = volume
+    audio["tts_volume_by_locale"] = tts_volumes
     audio["mute_source_audio"] = True
     audio["cta_source_audio"] = False
     if errors:
@@ -270,6 +284,7 @@ def campaign_template(
         "style_constraints": ["brand-safe", "identity-stable", "no unsupported claims"],
         "audio": {
             "tts_voice": "natural energetic young-adult female",
+            "tts_volume_by_locale": {"en": 1.0, "ja": 1.0, "yue": 1.0},
             "bgm_prompt": (
                 "at least 20 seconds of polished vertical social-ad background music matching the target Skill: "
                 "immediate hook, clear rhythmic edit points, energetic but refined, instrumental only, "

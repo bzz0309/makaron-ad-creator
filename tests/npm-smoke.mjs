@@ -66,6 +66,8 @@ assert.equal(fs.existsSync(uploadLogoCta), true);
 assert.ok(fs.statSync(uploadLogoCta).size > 100_000);
 assert.match(remotionFallback, /\bLoop\b/);
 assert.match(remotionFallback, /React\.__makaronEditableId/);
+assert.match(remotionFallback, /runtimeVoiceoverVolume/);
+assert.match(remotionFallback, /isVoiceover/);
 assert.match(remotionFallback, /captions/);
 assert.match(remotionFallback, /replace\(\/\\\\n\/g/);
 
