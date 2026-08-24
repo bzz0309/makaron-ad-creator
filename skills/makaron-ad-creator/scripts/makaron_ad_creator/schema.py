@@ -230,8 +230,8 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
             volume = float(raw_tts_volumes.get(locale, 1.0))
         except (TypeError, ValueError):
             volume = -1
-        if not 0.5 <= volume <= 1.5:
-            errors.append(f"audio.tts_volume_by_locale.{locale} must be between 0.5 and 1.5")
+        if not 0.5 <= volume <= 2.0:
+            errors.append(f"audio.tts_volume_by_locale.{locale} must be between 0.5 and 2.0")
         tts_volumes[locale] = volume
     audio["tts_volume_by_locale"] = tts_volumes
     audio["mute_source_audio"] = True

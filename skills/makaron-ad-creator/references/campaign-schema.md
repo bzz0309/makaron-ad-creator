@@ -14,7 +14,7 @@
 - `automation.max_attempts`: maximum `3`.
 - `automation.builder_skill_id`: defaults to Makaron's built-in `tiktok-video` Remotion builder; an explicit compatible builder can override it.
 - `audio.tts_voice`: defaults to `natural energetic young-adult female`.
-- `audio.tts_volume_by_locale`: optional voiceover-only gain map for `en`, `ja`, and `yue`; defaults to `1.0` and accepts `0.5–1.5` without changing BGM volume.
+- `audio.tts_volume_by_locale`: optional voiceover-only gain map for `en`, `ja`, and `yue`; defaults to `1.0` and accepts `0.5–2.0` without changing BGM volume.
 - `audio.bgm_prompt`: original instrumental direction for the campaign's one `makaron music create` node; defaults to at least 20 seconds, no vocals, no early fade-out, and loop-friendly.
 - `audio.bgm_style`: `--style` value for `makaron music create`.
 - `audio.bgm_volume`: Remotion relative mix volume under TTS, default `0.22` and maximum `0.5`.

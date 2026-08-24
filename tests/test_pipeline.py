@@ -215,16 +215,16 @@ class PipelineTests(unittest.TestCase):
     def test_locale_voiceover_gain_is_validated_and_serialized(self) -> None:
         path = self.make_campaign()
         config = read_json(path)
-        config["audio"]["tts_volume_by_locale"] = {"en": 1.0, "ja": 1.35, "yue": 1.0}
+        config["audio"]["tts_volume_by_locale"] = {"en": 1.0, "ja": 2.0, "yue": 1.0}
         write_json(path, config)
         validated = validate_config(read_json(path), path)
         scripts = {"ja": [f"line {index}" for index in range(5)]}
         prompt = final_prompt(validated, "ja", scripts)
-        self.assertIn("props.voiceoverVolume=1.35", prompt)
-        self.assertEqual(validated["audio"]["tts_volume_by_locale"]["ja"], 1.35)
+        self.assertIn("props.voiceoverVolume=2.00", prompt)
+        self.assertEqual(validated["audio"]["tts_volume_by_locale"]["ja"], 2.0)
 
         config = read_json(path)
-        config["audio"]["tts_volume_by_locale"]["ja"] = 1.75
+        config["audio"]["tts_volume_by_locale"]["ja"] = 2.01
         write_json(path, config)
         with self.assertRaisesRegex(AdCreatorError, "tts_volume_by_locale.ja"):
             validate_config(read_json(path), path)
