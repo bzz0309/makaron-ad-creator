@@ -16,7 +16,7 @@ metadata:
 
 ## Core concept
 
-Accept two required user inputs—one owned/licensed image and one Makaron Marketplace Skill name—and an optional locale selection. Run a resumable asset DAG that produces only the selected English, Japanese, and/or Hong Kong Cantonese ads. Keep generation in one persistent project bound to that Skill, generate only the matching App workflow locales, and package prompts, hashes, QC, and the selected final MP4s. Default to all three ad locales when no locale is supplied.
+Accept two required user inputs—one owned/licensed image and one Makaron Marketplace Skill name—and an optional locale selection. Run a resumable asset DAG that produces only the selected English, Japanese, and/or Hong Kong Cantonese ads. Keep generation in one persistent project generation bound to that Skill and exact input-image fingerprint, generate only the matching App workflow locales, and package prompts, hashes, QC, and the selected final MP4s. Default to all three ad locales when no locale is supplied.
 
 Use the bundled project CLI as the state owner. Do not improvise a parallel ad workflow in chat.
 
@@ -40,7 +40,7 @@ Treat the user's act of supplying the image for this exact generation request as
 
 ## Project isolation
 
-Bind one Skill to one persistent Makaron project inside the current Agent/browser workspace. Use `makaron chat --project <project_id>` for every image, video, TTS, localization, correction, and final Remotion assembly operation. Reject `--project auto`, standalone `makaron edit`, standalone `makaron video create`, a second project for the same Skill, or project reuse by a different Skill. The only standalone creative exception is the campaign's single instrumental BGM node, which must call `makaron music create` exactly once and then be reused by every selected locale.
+Bind one exact `(Skill ID, input-image SHA-256)` pair to one persistent Makaron project generation inside the current Agent/browser workspace. Reuse it for resume and repeat execution of that same pair; isolate a different image, never share across Skills, and rotate only when the guarded project-media threshold is reached, retaining prior project IDs in binding history. Legacy per-Skill bindings may migrate only when they match the current campaign. Use `makaron chat --project <project_id>` for every image, video, TTS, localization, correction, and final Remotion assembly operation. Reject `--project auto`, standalone `makaron edit`, standalone `makaron video create`, or project reuse by a different Skill/input pair. The only standalone creative exception is the campaign's single instrumental BGM node, which must call `makaron music create` exactly once and then be reused by every selected locale.
 
 Invoking this Skill with the two required inputs explicitly authorizes creating the one dedicated Makaron project needed for the requested generation. Create it automatically on first use, persist it in `project-registry.json`, and reuse it automatically thereafter. Another Agent scope may have its own binding.
 
@@ -98,7 +98,7 @@ Generate only Cantonese with a Traditional-Chinese workflow recording:
 makaron-ad create --image /owned/input.jpg --skill "Marketplace Skill Name" --locale yue
 ```
 
-The CLI automatically calls `makaron skills show`, resolves the Skill ID/core metadata, creates or reuses its persistent project, writes the campaign config, and runs the locale-scoped pipeline. Return only the final status and deliverables path.
+The CLI automatically calls `makaron skills show`, resolves the Skill ID/core metadata, creates or reuses the persistent project generation for that Skill and exact input image, writes the campaign config, and runs the locale-scoped pipeline. Return only the final status and deliverables path.
 
 Internal recovery commands accept a campaign ID, campaign directory, or complete `campaign.json` path. When a prior process ended while a node was `RUNNING`, `makaron-ad run` records the recovery, returns that orphaned node to `PENDING` without consuming a phantom attempt, and resumes from it. It never resets passed upstream nodes.
 
@@ -119,7 +119,7 @@ Read [executor-protocol.md](references/executor-protocol.md) for request semanti
 
 Use the English templates in `scripts/makaron_ad_creator/prompts.py`. Fill placeholders only. Do not translate, rewrite, reorder, add, or remove template sections before execution. Save every filled prompt under `run/prompts/` and compile them into `deliverables/prompt_used.md`.
 
-The five fixed final beats are: Hook extracted from the target-Skill effect source → simultaneous Before/After comparison image → truthful localized v5 workflow video → later non-overlapping Result from the same effect source → fixed Makaron Logo CTA video. Keep the same order and timing bounds across locales; allow exact beat lengths to adapt to measured speech. TTS defaults to a natural energetic young-adult female Seed Audio voice and must finish before CTA. Caption line 1 belongs to Hook, line 2 to comparison, lines 3–4 to workflow, and line 5 to result; no line may cross its scene boundary. Every source video is muted. CTA source audio is never used. One separately generated instrumental BGM is looped continuously from 0.0 seconds through the final CTA frame at relative mix volume `0.22`, with only a gentle final fade. On Meta Reels keep key content inside the central safe zone using ratios equivalent to top `250/1920`, bottom `340/1920`, left `90/1080`, right `180/1080`, and caption top `270/1920`; derive pixel values from the actual composition. Captions use white text, black outline, no bar, at most two lines and 20 visible characters per line.
+The five fixed final beats are: Hook extracted from the target-Skill effect source → simultaneous Before/After comparison image → truthful localized v5 workflow video → later non-overlapping Result from the same effect source → fixed Makaron Logo CTA video. Keep the same order and timing bounds across locales; allow exact beat lengths to adapt to measured speech. TTS defaults to a natural energetic young-adult female Seed Audio voice and must finish before CTA. Caption line 1 belongs to Hook, line 2 to comparison, lines 3–4 to workflow, and line 5 to result; no line may cross its scene boundary. Every source video is muted. CTA source audio is never used. One separately generated instrumental BGM is looped continuously from 0.0 seconds through the final CTA frame at relative mix volume `0.22`, with only a gentle final fade. On Meta Reels keep key content inside the central safe zone using ratios equivalent to top `250/1920`, bottom `340/1920`, left `90/1080`, right `180/1080`, and caption top `270/1920`; derive pixel values from the actual composition. Captions use white text, black outline, no bar, horizontal centering, at most two lines and 20 visible characters per line. Do not insert hard line breaks or the literal characters `\\n`; measure and auto-wrap inside the safe content width.
 
 Read [reference-editing-rhythm.md](references/reference-editing-rhythm.md) only when changing timing, duration QC, subtitle placement, or CTA selection.
 

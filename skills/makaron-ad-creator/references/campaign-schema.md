@@ -6,7 +6,7 @@
 - `campaign_id`: stable filesystem-safe label.
 - `input_image`: absolute path after validation.
 - `target_skill`: exact `id`, human `name`, factual `core`, and optional `transformation_type`.
-- `project_binding`: `strategy=one_skill_one_persistent_project`, matching `skill_id`, and explicit non-`auto` `project_id`.
+- `project_binding`: `strategy=one_skill_input_one_persistent_project`, matching `skill_id`, full `input_sha256`, and explicit non-`auto` `project_id`. Registry lookup uses the Skill ID plus an input-hash prefix; exact pairs resume, different images stay isolated, and media-capacity rotation keeps prior IDs in history. Legacy `one_skill_one_persistent_project` campaigns remain readable and migrate only when their active binding matches.
 - `rights`: all three booleans must be true before generation.
 - `offer`: substantiated value proposition, CTA, and optional destination URL.
 - `locales`: one or more selected mappings from the fixed set `en→en`, `ja→ja`, `yue→zh-Hant`; defaults to all three.

@@ -1,6 +1,6 @@
 {
   "name": "makaron-ad-creator-cli",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Portable one-image to selected-locale Makaron ad creator CLI for AI agents",
   "type": "module",
   "bin": {

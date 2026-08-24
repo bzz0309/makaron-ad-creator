@@ -11,10 +11,11 @@ from pathlib import Path
 
 from .pipeline import Pipeline, plan_for
 from .schema import DEFAULT_AD_LOCALES, DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
-from .util import AdCreatorError, json_candidates, read_json, run, sha256, slug, write_json
+from .util import AdCreatorError, json_candidates, project_binding_key, read_json, run, sha256, slug, write_json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_MEDIA_ROTATION_THRESHOLD = 60
 
 
 def _workspace_root() -> Path:
@@ -95,12 +96,25 @@ def _skill_core(skill: dict, display_name: str) -> str:
     return f"apply the Marketplace Skill named {display_name} to the authorized input image"
 
 
-def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: str, image: Path) -> str:
-    registry_path = workspace / "project-registry.json"
-    registry = read_json(registry_path) if registry_path.exists() else {"version": 1, "bindings": {}}
-    existing = registry.setdefault("bindings", {}).get(skill_id)
-    if existing:
-        return str(existing)
+def _project_media_count(binary: str, project_id: str) -> int | None:
+    """Read the current project timeline size without turning a probe failure into a rotation."""
+    try:
+        result = run([binary, "project", "media", project_id, "--json"], timeout=60)
+    except AdCreatorError:
+        return None
+    for candidate in reversed(list(json_candidates(result.stdout))):
+        if isinstance(candidate, dict):
+            media = candidate.get("media")
+            if not isinstance(media, list) and isinstance(candidate.get("result"), dict):
+                media = candidate["result"].get("media")
+            if isinstance(media, list):
+                return len(media)
+        elif isinstance(candidate, list):
+            return len(candidate)
+    return None
+
+
+def _create_bound_project(binary: str, skill_name: str, image: Path) -> str:
     result = run([binary, "create", "--image", str(image), "--title", f"makaron-ad · {skill_name}"], timeout=300)
     match = re.search(r"^\s*ID:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
     if not match:
@@ -110,7 +124,43 @@ def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: 
         project_id = match.group(1)
     if not project_id or project_id == "auto":
         raise AdCreatorError("Makaron created a project but returned no persistent project ID")
-    registry["bindings"][skill_id] = project_id
+    return project_id
+
+
+def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: str, image: Path) -> str:
+    registry_path = workspace / "project-registry.json"
+    registry = read_json(registry_path) if registry_path.exists() else {"version": 2, "bindings": {}, "history": {}}
+    registry["version"] = 2
+    bindings = registry.setdefault("bindings", {})
+    history = registry.setdefault("history", {})
+    binding_key = project_binding_key(skill_id, image)
+    existing = str(bindings.get(binding_key) or "")
+    if existing:
+        media_count = _project_media_count(binary, existing)
+        if media_count is None or media_count < PROJECT_MEDIA_ROTATION_THRESHOLD:
+            registry.setdefault("metadata", {})[binding_key] = {
+                "skill_id": skill_id,
+                "input_sha256": sha256(image),
+                "active_project_id": existing,
+                "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            write_json(registry_path, registry)
+            return existing
+    project_id = _create_bound_project(binary, skill_name, image)
+    if existing:
+        history.setdefault(binding_key, []).append({
+            "project_id": existing,
+            "reason": "media-capacity",
+            "media_count": media_count,
+            "rotated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
+    bindings[binding_key] = project_id
+    registry.setdefault("metadata", {})[binding_key] = {
+        "skill_id": skill_id,
+        "input_sha256": sha256(image),
+        "active_project_id": project_id,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
     write_json(registry_path, registry)
     return project_id
 

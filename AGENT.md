@@ -7,7 +7,7 @@ Maintain a resumable, one-image-to-selected-locale Makaron ad pipeline that can 
 ## Non-negotiable rules
 
 - Read `skills/makaron-ad-creator/SKILL.md` before changing workflow semantics.
-- Preserve `one Agent scope + one Skill → one persistent project` isolation.
+- Preserve `one Agent scope + one Skill + one exact input-image fingerprint → one persistent project generation` isolation. Reuse that project only for the same Skill and input image; isolate a different input image and rotate a generation when the project reaches the guarded media-capacity threshold. Keep prior project IDs in binding history for audit and resume.
 - Never introduce `--project auto`, standalone `makaron edit`, standalone `makaron video create`, a hard-coded shared project ID, API keys, tokens, or auto-publication. The one explicit standalone exception is one `makaron music create` BGM per campaign.
 - Persistent login may store a verified Makaron API key only in the current user's operating-system keychain. Never store or print credentials in project files, config JSON, state, logs, tests, release assets, or Git.
 - Keep `en→en`, `ja→ja`, and `yue→zh-Hant` mapping unless the product requirement explicitly changes.

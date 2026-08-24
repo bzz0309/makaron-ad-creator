@@ -20,6 +20,14 @@ const fps = Number(design.animation?.fps);
 const durationInSeconds = Number(design.animation?.durationInSeconds);
 const durationInFrames = Math.round(fps * durationInSeconds);
 const props = design.props && typeof design.props === 'object' ? design.props : {};
+if (Array.isArray(props.captions)) {
+  for (const caption of props.captions) {
+    if (!caption || typeof caption !== 'object') continue;
+    for (const key of ['text', 'display']) {
+      if (typeof caption[key] === 'string') caption[key] = caption[key].replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+  }
+}
 
 if (!code.includes('function Composition') || code.length > 250_000) {
   throw new Error('The Makaron response did not contain a bounded Composition function.');
@@ -49,7 +57,7 @@ const entryPoint = path.join(temporary, 'index.jsx');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const entry = `
 import React from 'react';
-import {AbsoluteFill, Composition as RemotionComposition, Img, Sequence, interpolate, registerRoot, useCurrentFrame} from 'remotion';
+import {AbsoluteFill, Composition as RemotionComposition, Img, Loop, Sequence, interpolate, registerRoot, useCurrentFrame} from 'remotion';
 import {Audio, Video} from '@remotion/media';
 ${code}
 const defaultProps = ${JSON.stringify(props)};

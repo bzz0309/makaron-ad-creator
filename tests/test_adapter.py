@@ -14,12 +14,74 @@ from makaron_ad_creator.adapter import (
     extract_generated_video_urls,
     extract_json_object,
     extract_remotion_design,
+    sanitize_caption_text,
     validate_ad_remotion_design,
 )
 from makaron_ad_creator.util import AdCreatorError
 
 
 class AdapterTests(unittest.TestCase):
+    def test_failed_materialize_preserves_design_from_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            design = {
+                "code": "function Composition() { return null; }",
+                "props": {},
+                "animation": {"fps": 30, "durationInSeconds": 18},
+            }
+            failed = SimpleNamespace(
+                stdout=json.dumps({"status": "failed", "result": {"designs": [design]}}),
+                stderr="export failed",
+                returncode=1,
+            )
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            with patch("makaron_ad_creator.adapter.run", return_value=failed) as mocked_run:
+                raw, urls = adapter._materialize("final-en", "run-1", {}, required_kind="video")
+            self.assertEqual(extract_remotion_design(raw), design)
+            self.assertEqual(urls, [])
+            self.assertFalse(mocked_run.call_args.kwargs["check"])
+
+    def test_chat_defers_design_fallback_until_pipeline_rebinds_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            design = {
+                "code": "function Composition() { return null; }",
+                "props": {"comparisonImage": "https://broken.example.com/comparison.png"},
+                "animation": {"fps": 30, "durationInSeconds": 18},
+            }
+            raw = {"responseId": "run-1", "result": {"videos": [], "designs": [design]}}
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            with patch("makaron_ad_creator.adapter.run", return_value=SimpleNamespace(stdout=json.dumps(raw), stderr="", returncode=0)), \
+                 patch.object(adapter, "render_remotion_fallback") as mocked_fallback:
+                result = adapter.chat(
+                    node_id="final-en",
+                    prompt="export",
+                    destination=root / "final.mp4",
+                    require_generated_video=True,
+                )
+            self.assertTrue(result["remotion_design_only"])
+            self.assertEqual(extract_remotion_design(result["response"]), design)
+            mocked_fallback.assert_not_called()
+
+    def test_caption_sanitizer_removes_manual_newlines(self) -> None:
+        props = {
+            "captions": [
+                {"text": "ONE\\nLINE", "display": "ONE\nLINE"},
+                {"text": "  TWO   LINES  "},
+            ]
+        }
+        changed = sanitize_caption_text(props)
+        self.assertEqual(changed, 3)
+        self.assertEqual(props["captions"][0]["text"], "ONE LINE")
+        self.assertEqual(props["captions"][0]["display"], "ONE LINE")
+        self.assertEqual(props["captions"][1]["text"], "TWO LINES")
+
     def test_final_asset_binding_replaces_stale_persistent_project_bgm(self) -> None:
         keys = ("comparisonImage", "hookVideo", "resultVideo", "workflowVideo", "ctaVideo", "bgmUrl")
         design = {

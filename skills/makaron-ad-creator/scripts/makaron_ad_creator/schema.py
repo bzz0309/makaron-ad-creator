@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .util import AdCreatorError, resolve_path
+from .util import AdCreatorError, resolve_path, sha256
 
 
 LOCALE_TO_UI = {"en": "en", "ja": "ja", "yue": "zh-Hant"}
@@ -58,12 +58,17 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
         if not str(skill.get(key, "")).strip():
             errors.append(f"target_skill.{key} is required")
     project = config.get("project_binding", {})
-    if project.get("strategy") != "one_skill_one_persistent_project":
-        errors.append("project_binding.strategy must be one_skill_one_persistent_project")
+    project_strategies = {"one_skill_one_persistent_project", "one_skill_input_one_persistent_project"}
+    if project.get("strategy") not in project_strategies:
+        errors.append("project_binding.strategy must be one_skill_input_one_persistent_project")
     if not project.get("project_id") or project.get("project_id") == "auto":
         errors.append("project_binding.project_id must be a persistent non-auto ID")
     if project.get("skill_id") != skill.get("id"):
         errors.append("project_binding.skill_id must equal target_skill.id")
+    if project.get("strategy") == "one_skill_input_one_persistent_project":
+        expected_input_sha256 = sha256(image) if image.is_file() else ""
+        if project.get("input_sha256") != expected_input_sha256:
+            errors.append("project_binding.input_sha256 must match input_image")
     rights = config.get("rights", {})
     if rights.get("owned_or_licensed") is not True:
         errors.append("rights.owned_or_licensed must be true")
@@ -245,9 +250,10 @@ def campaign_template(
             "transformation_type": "identity",
         },
         "project_binding": {
-            "strategy": "one_skill_one_persistent_project",
+            "strategy": "one_skill_input_one_persistent_project",
             "skill_id": skill_id,
             "project_id": project_id,
+            "input_sha256": sha256(image),
         },
         "rights": {
             "owned_or_licensed": True,

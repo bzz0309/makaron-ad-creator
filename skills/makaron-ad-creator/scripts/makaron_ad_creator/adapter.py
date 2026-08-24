@@ -105,6 +105,14 @@ class MakaronAdapter:
                 downloadable = urls
             if not downloadable:
                 if require_generated_video and allow_remotion_fallback:
+                    if extract_remotion_design(raw):
+                        return {
+                            "response_id": response_id,
+                            "media_urls": urls,
+                            "response": raw,
+                            "response_path": str(response_path),
+                            "remotion_design_only": True,
+                        }
                     fallback = self.render_remotion_fallback(node_id, raw, destination, contract=remotion_contract)
                     return {
                         "response_id": response_id,
@@ -187,6 +195,7 @@ class MakaronAdapter:
             )
         if contract != "ad-final":
             raise AdCreatorError(f"Unknown Remotion fallback contract: {contract}")
+        sanitize_caption_text(design["props"])
         validate_ad_remotion_design(design)
         design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
         write_json(design_path, design)
@@ -284,7 +293,7 @@ class MakaronAdapter:
         for command in attempts:
             self._log(node_id + "-poll", command)
             try:
-                result = run(command, timeout=1800)
+                result = run(command, timeout=1800, check=False)
             except AdCreatorError:
                 continue
             values = list(json_candidates(result.stdout))
@@ -394,6 +403,26 @@ def extract_remotion_design(response: Any) -> dict[str, Any] | None:
             ):
                 return design
     return None
+
+
+def sanitize_caption_text(props: dict[str, Any]) -> int:
+    """Remove manual caption line breaks so Remotion can wrap inside the safe zone."""
+    captions = props.get("captions")
+    if not isinstance(captions, list):
+        return 0
+    changed = 0
+    for caption in captions:
+        if not isinstance(caption, dict):
+            continue
+        for key in ("text", "display"):
+            value = caption.get(key)
+            if not isinstance(value, str):
+                continue
+            normalized = re.sub(r"\s+", " ", value.replace("\\n", " ").replace("\n", " ")).strip()
+            if normalized != value:
+                caption[key] = normalized
+                changed += 1
+    return changed
 
 
 def validate_ad_remotion_design(design: dict[str, Any]) -> None:

@@ -5,12 +5,12 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from PIL import Image
 
 from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable, normalize_near_vertical_resolution
-from makaron_ad_creator.cli import main, resolve_campaign_path
+from makaron_ad_creator.cli import _project_for_skill, main, project_binding_key, resolve_campaign_path
 from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
 from makaron_ad_creator.prompts import after_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
@@ -182,6 +182,9 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("older 140px", prompt)
         self.assertIn("y=270", prompt)
         self.assertIn("at most 20 visible characters", prompt)
+        self.assertIn("horizontally centered inside the safe content region", prompt)
+        self.assertIn("must not contain literal backslash-n", prompt)
+        self.assertIn("topRatio=", prompt)
         self.assertIn("video 1 is the opening Hook segment extracted from the target-Skill effect source", prompt)
         self.assertIn("never request or invent a separately generated Hook", prompt)
         self.assertIn("minimum 720x1280", prompt)
@@ -279,6 +282,73 @@ class PipelineTests(unittest.TestCase):
             "https://cdn.example.com/logo.mp4",
         ])
         self.assertEqual(request["images"], ["https://cdn.example.com/comparison.png"])
+
+    def test_design_only_final_is_rendered_after_current_asset_binding(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["locales"] = locale_config(["en"])
+        write_json(path, config)
+        pipeline = Pipeline(path, executor="makaron")
+        assets = {
+            "scripts": self.root / "scripts.json",
+            "comparison": self.root / "comparison.png",
+            "hook": self.root / "hook.mp4",
+            "result": self.root / "result.mp4",
+            "bgm": self.root / "bgm.mp3",
+            "workflow-en": self.root / "workflow-en.mp4",
+        }
+        write_json(assets["scripts"], {"en": [f"line {index}" for index in range(5)]})
+        for role, asset in assets.items():
+            if role != "scripts":
+                asset.write_bytes(role.encode())
+        pipeline.add_artifact("scripts", assets["scripts"])
+        pipeline.add_artifact("comparison", assets["comparison"], source_url="https://cdn.example.com/comparison.png")
+        pipeline.add_artifact("hook", assets["hook"], source_url="https://cdn.example.com/hook.mp4")
+        pipeline.add_artifact("result", assets["result"], source_url="https://cdn.example.com/result.mp4")
+        pipeline.add_artifact("bgm", assets["bgm"], source_url="https://cdn.example.com/bgm.mp3")
+        pipeline.add_artifact("workflow-en", assets["workflow-en"], source_url="https://cdn.example.com/workflow.mp4")
+
+        props = read_json(self.make_timing_manifest())
+        props.update({
+            "comparisonImage": "https://cdn.example.com/comparison.png",
+            "hookVideo": "https://cdn.example.com/hook.mp4",
+            "resultVideo": "https://cdn.example.com/result.mp4",
+            "workflowVideo": "https://cdn.example.com/workflow.mp4",
+            "ctaVideo": "https://cdn.example.com/logo.mp4",
+            "bgmUrl": "https://cdn.example.com/bgm.mp3",
+        })
+        design = {
+            "width": 1080,
+            "height": 1920,
+            "animation": {"fps": 30, "durationInSeconds": 18},
+            "code": "function Composition() { return null; } comparisonImage hookVideo resultVideo workflowVideo ctaVideo bgmUrl",
+            "props": props,
+        }
+
+        def render_fallback(_: str, response: dict, destination: Path) -> dict:
+            rebound = response["result"]["designs"][0]
+            self.assertEqual(rebound["props"]["comparisonImage"], "https://cdn.example.com/comparison.png")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"rendered final")
+            return {"engine": "local-remotion-from-makaron-design"}
+
+        adapter = SimpleNamespace(
+            publish_local_media=lambda _path, role: "https://cdn.example.com/logo.mp4",
+            chat=Mock(return_value={
+                "response_id": "run-1",
+                "response": {"result": {"designs": [design]}},
+                "remotion_design_only": True,
+            }),
+            render_remotion_fallback=Mock(side_effect=render_fallback),
+        )
+        final_info = {"width": 1080, "height": 1920, "duration": 18.0, "codec": "h264", "has_audio": True, "bytes": 1024}
+        with patch.object(pipeline, "_adapter", return_value=adapter), \
+             patch("makaron_ad_creator.pipeline.probe_video", return_value=final_info), \
+             patch("makaron_ad_creator.pipeline.bgm_similarity_in_cta", return_value=0.9):
+            pipeline._generate_final("en", 1)
+        adapter.render_remotion_fallback.assert_called_once()
+        artifact = pipeline.state["nodes"]["final-en"]["artifacts"][0]
+        self.assertEqual(artifact["render_fallback"]["engine"], "local-remotion-from-makaron-design")
 
     def test_makaron_asset_requests_are_explicit_and_locale_scoped(self) -> None:
         path = self.make_campaign()
@@ -533,6 +603,25 @@ class PipelineTests(unittest.TestCase):
         state = read_json(second.parent / "state.json")
         self.assertIn("another Skill", state["nodes"]["validate"]["last_error"])
 
+    def test_legacy_skill_binding_migrates_without_breaking_resume(self) -> None:
+        path = self.make_campaign("legacy", "skill-1", "project-legacy")
+        config = read_json(path)
+        config["project_binding"] = {
+            "strategy": "one_skill_one_persistent_project",
+            "skill_id": "skill-1",
+            "project_id": "project-legacy",
+        }
+        write_json(path, config)
+        write_json(self.root / "project-registry.json", {
+            "version": 1,
+            "bindings": {"skill-1": "project-legacy"},
+        })
+        pipeline = Pipeline(path, executor="agent")
+        self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")
+        registry = read_json(self.root / "project-registry.json")
+        self.assertEqual(registry["bindings"][project_binding_key("skill-1", self.image)], "project-legacy")
+        self.assertEqual(registry["version"], 2)
+
     def test_comparison_is_exact_vertical_canvas(self) -> None:
         before = self.root / "before.png"
         after = self.root / "after.png"
@@ -607,13 +696,71 @@ class PipelineTests(unittest.TestCase):
              patch("makaron_ad_creator.cli.Pipeline.run", return_value="PASS"):
             self.assertEqual(main([str(self.image), "Rainy Kiss"]), 0)
         registry = read_json(self.root / "project-registry.json")
-        self.assertEqual(registry["bindings"]["market-skill-1"], "project-created-1")
+        key = project_binding_key("market-skill-1", self.image)
+        self.assertEqual(registry["bindings"][key], "project-created-1")
+        self.assertEqual(registry["version"], 2)
         configs = list((self.root / "campaigns").glob("*/campaign.json"))
         self.assertEqual(len(configs), 1)
         config = read_json(configs[0])
         self.assertEqual(config["target_skill"]["name"], "Rainy Kiss")
         self.assertEqual(config["automation"]["executor"], "makaron")
         self.assertEqual(mocked_run.call_count, 2)
+
+    def test_project_binding_reuses_same_image_but_isolates_a_new_image(self) -> None:
+        second_image = self.root / "second.jpg"
+        Image.new("RGB", (600, 900), "#204080").save(second_image)
+        created_one = SimpleNamespace(stdout="ID: project-one\n", stderr="", returncode=0)
+        media_one = SimpleNamespace(stdout=json.dumps({"media": [{"id": "m1"}]}), stderr="", returncode=0)
+        created_two = SimpleNamespace(stdout="ID: project-two\n", stderr="", returncode=0)
+        with patch("makaron_ad_creator.cli.run", side_effect=[created_one, media_one, created_two]) as mocked_run:
+            first = _project_for_skill(self.root, "makaron", "skill-1", "Example", self.image)
+            repeated = _project_for_skill(self.root, "makaron", "skill-1", "Example", self.image)
+            second = _project_for_skill(self.root, "makaron", "skill-1", "Example", second_image)
+        self.assertEqual((first, repeated, second), ("project-one", "project-one", "project-two"))
+        registry = read_json(self.root / "project-registry.json")
+        self.assertEqual(registry["bindings"][project_binding_key("skill-1", self.image)], "project-one")
+        self.assertEqual(registry["bindings"][project_binding_key("skill-1", second_image)], "project-two")
+        self.assertEqual(mocked_run.call_count, 3)
+
+    def test_project_binding_rotates_when_media_capacity_is_reached(self) -> None:
+        binding_key = project_binding_key("skill-1", self.image)
+        write_json(self.root / "project-registry.json", {
+            "version": 2,
+            "bindings": {binding_key: "project-full"},
+            "history": {},
+        })
+        full_media = SimpleNamespace(
+            stdout=json.dumps({"media": [{"id": f"m{index}"} for index in range(60)]}),
+            stderr="",
+            returncode=0,
+        )
+        created = SimpleNamespace(stdout="ID: project-rotated\n", stderr="", returncode=0)
+        with patch("makaron_ad_creator.cli.run", side_effect=[full_media, created]):
+            project = _project_for_skill(self.root, "makaron", "skill-1", "Example", self.image)
+        self.assertEqual(project, "project-rotated")
+        registry = read_json(self.root / "project-registry.json")
+        self.assertEqual(registry["bindings"][binding_key], "project-rotated")
+        self.assertEqual(registry["history"][binding_key][-1]["project_id"], "project-full")
+        self.assertEqual(registry["history"][binding_key][-1]["reason"], "media-capacity")
+
+    def test_rotated_project_history_keeps_old_campaign_resumable(self) -> None:
+        path = self.make_campaign("before-rotation", "skill-1", "project-full")
+        binding_key = project_binding_key("skill-1", self.image)
+        write_json(self.root / "project-registry.json", {
+            "version": 2,
+            "bindings": {binding_key: "project-rotated"},
+            "history": {
+                binding_key: [{
+                    "project_id": "project-full",
+                    "reason": "media-capacity",
+                    "media_count": 60,
+                }],
+            },
+        })
+        pipeline = Pipeline(path, executor="agent")
+        self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")
+        registry = read_json(self.root / "project-registry.json")
+        self.assertEqual(registry["bindings"][binding_key], "project-rotated")
 
     def test_public_entrypoint_accepts_one_selected_locale(self) -> None:
         marketplace = {

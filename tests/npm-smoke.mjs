@@ -9,6 +9,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cli = path.join(root, 'bin', 'makaron-ad.mjs');
 const fixedLogoCta = path.join(root, 'skills', 'makaron-ad-creator', 'assets', 'makaron-logo-cta.mp4');
 const uploadLogoCta = path.join(root, 'skills', 'makaron-ad-creator', 'assets', 'makaron-logo-cta-3s.mp4');
+const remotionFallback = fs.readFileSync(path.join(root, 'skills', 'makaron-ad-creator', 'scripts', 'remotion_fallback', 'render.mjs'), 'utf8');
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'makaron-ad-npm-smoke-'));
 const fakeKeychain = path.join(temporary, 'fake-security');
 const fakeMakaron = path.join(temporary, 'fake-makaron');
@@ -58,16 +59,19 @@ function invoke(args, extraEnv = {}) {
 }
 
 assert.match(invoke(['help']), /makaron-ad create/);
-assert.equal(invoke(['version']).trim(), '0.6.1');
+assert.equal(invoke(['version']).trim(), '0.6.2');
 assert.equal(fs.existsSync(fixedLogoCta), true);
 assert.ok(fs.statSync(fixedLogoCta).size > 1_000_000);
 assert.equal(fs.existsSync(uploadLogoCta), true);
 assert.ok(fs.statSync(uploadLogoCta).size > 100_000);
+assert.match(remotionFallback, /\bLoop\b/);
+assert.match(remotionFallback, /captions/);
+assert.match(remotionFallback, /replace\(\/\\\\n\/g/);
 
 const drySetup = JSON.parse(invoke(['setup', '--dry-run']));
 assert.equal(drySetup.ok, true);
-assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.6.1');
-assert.equal(drySetup.permission_fallback.join(' '), `npm install -g makaron-ad-creator-cli@0.6.1 --prefix ${path.join(temporary, 'npm-global')}`);
+assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.6.2');
+assert.equal(drySetup.permission_fallback.join(' '), `npm install -g makaron-ad-creator-cli@0.6.2 --prefix ${path.join(temporary, 'npm-global')}`);
 assert.equal(drySetup.skill_install.command.includes('makaron-ad-creator'), true);
 
 const dryCreate = JSON.parse(invoke(['create', '--image', '/tmp/input.jpg', '--skill', 'Rainy Kiss', '--dry-run']));

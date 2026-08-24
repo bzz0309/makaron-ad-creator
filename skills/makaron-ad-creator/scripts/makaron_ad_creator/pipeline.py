@@ -9,11 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
+from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, sanitize_caption_text, validate_ad_remotion_design, validate_timing_manifest
 from .media import bgm_similarity_in_cta, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
 from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
-from .util import AdCreatorError, read_json, run as run_command, sha256, write_json
+from .util import AdCreatorError, project_binding_key, read_json, run as run_command, sha256, write_json
 
 
 MODELS = ["seedance-2-0", "kling", "grok"]
@@ -272,14 +272,39 @@ class Pipeline:
         registry_path = self.campaign_dir.parent.parent / "project-registry.json"
         skill_id = self.config["target_skill"]["id"]
         project_id = self.config["project_binding"]["project_id"]
-        registry = read_json(registry_path) if registry_path.exists() else {"version": 1, "bindings": {}}
-        current = registry["bindings"].get(skill_id)
+        image = Path(self.config["input_image"])
+        binding_key = project_binding_key(skill_id, image)
+        registry = read_json(registry_path) if registry_path.exists() else {"version": 2, "bindings": {}, "history": {}}
+        registry["version"] = 2
+        bindings = registry.setdefault("bindings", {})
+        current = bindings.get(binding_key)
+        legacy = bindings.get(skill_id)
+        if not current and legacy == project_id:
+            current = legacy
+        history = registry.setdefault("history", {})
+        historical_projects = {
+            str(item.get("project_id"))
+            for item in history.get(binding_key, [])
+            if isinstance(item, dict) and item.get("project_id")
+        }
+        historical_resume = bool(current and current != project_id and project_id in historical_projects)
         if current and current != project_id:
-            raise AdCreatorError(f"Skill {skill_id} is already bound to project {current}; migration requires explicit registry edit")
-        for existing_skill, existing_project in registry["bindings"].items():
-            if existing_project == project_id and existing_skill != skill_id:
+            if not historical_resume:
+                raise AdCreatorError(f"Skill+input {binding_key} is already bound to project {current}; migration requires explicit registry edit")
+        for existing_key, existing_project in bindings.items():
+            if existing_project != project_id or existing_key in {binding_key, skill_id}:
+                continue
+            existing_skill = existing_key.split(":", 1)[0]
+            if existing_skill != skill_id:
                 raise AdCreatorError(f"Project {project_id} is already bound to another Skill: {existing_skill}")
-        registry["bindings"][skill_id] = project_id
+            raise AdCreatorError(f"Project {project_id} is already bound to another input image for Skill {skill_id}")
+        if not historical_resume:
+            bindings[binding_key] = project_id
+            registry.setdefault("metadata", {})[binding_key] = {
+                "skill_id": skill_id,
+                "input_sha256": sha256(image),
+                "active_project_id": project_id,
+            }
         write_json(registry_path, registry)
         write_json(self.campaign_dir / "project-binding.json", self.config["project_binding"])
 
@@ -554,6 +579,7 @@ class Pipeline:
         cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
         cached_design = extract_remotion_design(cached_response) if cached_response else None
         cached_contract_valid = False
+        caption_text_changes = 0
         if attempt == 1 and cached_design:
             try:
                 cached_binding_changes = bind_ad_remotion_assets(
@@ -562,6 +588,7 @@ class Pipeline:
                     videos=videos,
                     bgm_url=bgm_input,
                 )
+                caption_text_changes = sanitize_caption_text(cached_design["props"])
                 cached_contract_valid = cached_final_design_matches_effect_segments(
                     cached_design,
                     hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
@@ -597,9 +624,11 @@ class Pipeline:
                 videos=videos,
                 bgm_url=bgm_input,
             )
+            caption_text_changes = sanitize_caption_text(final_design["props"])
             validate_ad_remotion_design(final_design)
-            if binding_changes:
-                corrected = adapter.render_remotion_fallback(node_id, result["response"], output)
+            if binding_changes or result.get("remotion_design_only") or not output.is_file():
+                corrected_response = {"result": {"designs": [final_design]}}
+                corrected = adapter.render_remotion_fallback(node_id, corrected_response, output)
                 result["render_fallback"] = corrected
         binding_manifest = self.run_dir / "final" / f"asset-bindings-{locale}.json"
         write_json(binding_manifest, {
@@ -610,6 +639,7 @@ class Pipeline:
             "ctaVideo": videos[3],
             "bgmUrl": bgm_input,
             "corrected_stale_props": binding_changes,
+            "caption_text_values_sanitized": caption_text_changes,
         })
         timing_manifest = self.run_dir / "final" / f"timing-manifest-{locale}.json"
         write_json(timing_manifest, final_design["props"])
@@ -649,6 +679,7 @@ class Pipeline:
             composition_contract_version=2,
             asset_binding_manifest=str(binding_manifest.resolve()),
             stale_project_assets_corrected=binding_changes,
+            caption_text_values_sanitized=caption_text_changes,
             render_fallback=result.get("render_fallback"),
             voiceover_script=scripts[locale],
         )
