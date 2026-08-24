@@ -284,16 +284,21 @@ class MakaronAdapter:
         *,
         required_kind: str | None = None,
     ) -> tuple[Any, list[str]]:
+        # Read the completed response before asking the CLI to materialize it.
+        # A Remotion response can contain a complete editable design even when
+        # the platform MP4 export is Forbidden.  Putting --materialize first
+        # made that valid fallback wait for the materializer timeout (up to 30
+        # minutes) before the local renderer could take over.
         attempts = [
-            [self.binary, "responses", "get", response_id, "--wait", "--materialize", "--json"],
-            [self.binary, "responses", "get", response_id, "--wait", "--json"],
-            [self.binary, "responses", "get", response_id, "--json"],
+            ([self.binary, "responses", "get", response_id, "--wait", "--json"], 600),
+            ([self.binary, "responses", "get", response_id, "--json"], 120),
+            ([self.binary, "responses", "get", response_id, "--wait", "--materialize", "--json"], 600),
         ]
         last = fallback
-        for command in attempts:
+        for command, timeout in attempts:
             self._log(node_id + "-poll", command)
             try:
-                result = run(command, timeout=1800, check=False)
+                result = run(command, timeout=timeout, check=False)
             except AdCreatorError:
                 continue
             values = list(json_candidates(result.stdout))
@@ -488,10 +493,14 @@ def validate_timing_manifest(props: dict[str, Any]) -> None:
         "rightRatio": 180 / 1080,
         "captionTopRatio": 250 / 1920,
     }
+    # Makaron commonly serializes normalized ratios to six decimal places.
+    # Accept sub-micro rounding drift while continuing to reject a materially
+    # smaller safe zone.
+    ratio_epsilon = 1e-6
     if all(key in safe for key in ratio_minimums):
         for key, minimum in ratio_minimums.items():
             ratio = numeric(safe.get(key), f"safeZone.{key}")
-            if ratio < minimum or ratio >= 1:
+            if ratio + ratio_epsilon < minimum or ratio >= 1:
                 raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum:.6f} and below 1")
         if numeric(safe["captionTopRatio"], "safeZone.captionTopRatio") < numeric(safe["topRatio"], "safeZone.topRatio"):
             raise AdCreatorError("Remotion safeZone.captionTopRatio must not enter the top overlay zone")
@@ -502,8 +511,8 @@ def validate_timing_manifest(props: dict[str, Any]) -> None:
             if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
                 raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
     maximum_characters = numeric(safe.get("maxCharactersPerLine", 0), "safeZone.maxCharactersPerLine")
-    if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 21):
-        raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 20")
+    if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 33):
+        raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 32")
     captions = props.get("captions")
     if not isinstance(captions, list) or len(captions) != 5:
         raise AdCreatorError("Remotion design must contain exactly five timed Caption objects")

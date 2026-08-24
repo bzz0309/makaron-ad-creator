@@ -311,7 +311,7 @@ def campaign_template(
                 "left_ratio": 90 / 1080,
                 "right_ratio": 180 / 1080,
                 "caption_top_ratio": 270 / 1920,
-                "max_characters_per_line": 20,
+                "max_characters_per_line": 32,
             },
             "minimum_duration_seconds": 15.0,
             "preferred_duration_seconds": 18.0,

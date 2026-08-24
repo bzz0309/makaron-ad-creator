@@ -59,6 +59,12 @@ const entry = `
 import React from 'react';
 import {AbsoluteFill, Composition as RemotionComposition, Img, Loop, Sequence, interpolate, registerRoot, useCurrentFrame} from 'remotion';
 import {Audio, Video} from '@remotion/media';
+// Makaron Studio decorates React with this metadata-only editing helper.
+// It has no visual meaning in an export, so preserve the returned design and
+// provide a stable compatibility identifier outside the Studio runtime.
+if (typeof React.__makaronEditableId !== 'function') {
+  React.__makaronEditableId = (_value, bindings = []) => bindings[0]?.id || undefined;
+}
 ${code}
 const defaultProps = ${JSON.stringify(props)};
 const Root = () => <RemotionComposition id="MakaronAd" component={Composition} durationInFrames={${durationInFrames}} fps={${fps}} width={${width}} height={${height}} defaultProps={defaultProps} />;

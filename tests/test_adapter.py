@@ -44,6 +44,33 @@ class AdapterTests(unittest.TestCase):
             self.assertEqual(urls, [])
             self.assertFalse(mocked_run.call_args.kwargs["check"])
 
+    def test_materialize_reads_completed_design_before_requesting_export(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_name:
+            root = Path(temp_name)
+            fake = root / "fake-makaron"
+            fake.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            fake.chmod(0o755)
+            design = {
+                "code": "function Composition() { return null; }",
+                "props": {},
+                "animation": {"fps": 30, "durationInSeconds": 15.4},
+            }
+            completed = SimpleNamespace(
+                stdout=json.dumps({"status": "completed", "result": {"videos": [], "designs": [design]}}),
+                stderr="",
+                returncode=0,
+            )
+            adapter = MakaronAdapter("project-1", root / "run", str(fake))
+            with patch("makaron_ad_creator.adapter.run", return_value=completed) as mocked_run:
+                raw, urls = adapter._materialize("final-ja", "run-1", {}, required_kind="video")
+            self.assertEqual(extract_remotion_design(raw), design)
+            self.assertEqual(urls, [])
+            self.assertEqual(mocked_run.call_count, 1)
+            command = mocked_run.call_args.args[0]
+            self.assertIn("--wait", command)
+            self.assertNotIn("--materialize", command)
+            self.assertEqual(mocked_run.call_args.kwargs["timeout"], 600)
+
     def test_chat_defers_design_fallback_until_pipeline_rebinds_assets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)
@@ -261,6 +288,36 @@ class AdapterTests(unittest.TestCase):
                     "leftPx": 60,
                     "rightPx": 120,
                     "captionTopPx": 180,
+                    "maxCharactersPerLine": 20,
+                },
+                "captions": captions,
+                "scenes": scenes,
+                "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
+            }
+        }
+        validate_ad_remotion_design(design)
+
+    def test_remotion_contract_accepts_six_decimal_ratio_rounding(self) -> None:
+        scenes = {
+            "hook": {"startMs": 0, "endMs": 2500},
+            "comparison": {"startMs": 2500, "endMs": 5000},
+            "workflow": {"startMs": 5000, "endMs": 9000},
+            "result": {"startMs": 9000, "endMs": 15000},
+            "cta": {"startMs": 15000, "endMs": 18000},
+        }
+        captions = [
+            {"text": str(index), "startMs": start, "endMs": end, "timestampMs": start, "confidence": 1}
+            for index, (start, end) in enumerate(((100, 2000), (2700, 4700), (5100, 6500), (6600, 8500), (9200, 14000)))
+        ]
+        design = {
+            "props": {
+                "compositionContractVersion": 2,
+                "safeZone": {
+                    "topRatio": 0.130208,
+                    "bottomRatio": 0.177083,
+                    "leftRatio": 0.083333,
+                    "rightRatio": 0.166667,
+                    "captionTopRatio": 0.140625,
                     "maxCharactersPerLine": 20,
                 },
                 "captions": captions,
