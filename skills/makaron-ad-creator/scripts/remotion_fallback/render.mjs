@@ -20,6 +20,14 @@ const fps = Number(design.animation?.fps);
 const durationInSeconds = Number(design.animation?.durationInSeconds);
 const durationInFrames = Math.round(fps * durationInSeconds);
 const props = design.props && typeof design.props === 'object' ? design.props : {};
+if (Array.isArray(props.captions)) {
+  for (const caption of props.captions) {
+    if (!caption || typeof caption !== 'object') continue;
+    for (const key of ['text', 'display']) {
+      if (typeof caption[key] === 'string') caption[key] = caption[key].replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim();
+    }
+  }
+}
 
 if (!code.includes('function Composition') || code.length > 250_000) {
   throw new Error('The Makaron response did not contain a bounded Composition function.');
@@ -49,10 +57,28 @@ const entryPoint = path.join(temporary, 'index.jsx');
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 const entry = `
 import React from 'react';
-import {AbsoluteFill, Composition as RemotionComposition, Img, Sequence, interpolate, registerRoot, useCurrentFrame} from 'remotion';
-import {Audio, Video} from '@remotion/media';
+import {AbsoluteFill, Composition as RemotionComposition, Img, Loop, Sequence, interpolate, registerRoot, useCurrentFrame} from 'remotion';
+import {Audio as RemotionAudio, Video} from '@remotion/media';
+// Makaron Studio decorates React with this metadata-only editing helper.
+// It has no visual meaning in an export, so preserve the returned design and
+// provide a stable compatibility identifier outside the Studio runtime.
+if (typeof React.__makaronEditableId !== 'function') {
+  React.__makaronEditableId = (_value, bindings = []) => bindings[0]?.id || undefined;
+}
+const runtimeProps = ${JSON.stringify(props)};
+const runtimeVoiceoverUrl = String(runtimeProps.voiceoverUrl || '');
+const runtimeVoiceoverVolume = Number(runtimeProps.voiceoverVolume || 1);
+const Audio = (inputProps) => {
+  const isVoiceover = runtimeVoiceoverUrl && String(inputProps.src || '') === runtimeVoiceoverUrl;
+  const gain = isVoiceover ? runtimeVoiceoverVolume : 1;
+  const originalVolume = inputProps.volume;
+  const volume = typeof originalVolume === 'function'
+    ? (frame) => Number(originalVolume(frame)) * gain
+    : Number(originalVolume ?? 1) * gain;
+  return <RemotionAudio {...inputProps} volume={volume} />;
+};
 ${code}
-const defaultProps = ${JSON.stringify(props)};
+const defaultProps = runtimeProps;
 const Root = () => <RemotionComposition id="MakaronAd" component={Composition} durationInFrames={${durationInFrames}} fps={${fps}} width={${width}} height={${height}} defaultProps={defaultProps} />;
 registerRoot(Root);
 `;

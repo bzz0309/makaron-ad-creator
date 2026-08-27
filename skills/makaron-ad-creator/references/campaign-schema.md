@@ -6,7 +6,7 @@
 - `campaign_id`: stable filesystem-safe label.
 - `input_image`: absolute path after validation.
 - `target_skill`: exact `id`, human `name`, factual `core`, and optional `transformation_type`.
-- `project_binding`: `strategy=one_skill_one_persistent_project`, matching `skill_id`, and explicit non-`auto` `project_id`.
+- `project_binding`: `strategy=one_skill_input_one_persistent_project`, matching `skill_id`, full `input_sha256`, and explicit non-`auto` `project_id`. Registry lookup uses the Skill ID plus an input-hash prefix; exact pairs resume, different images stay isolated, and media-capacity rotation keeps prior IDs in history. Legacy `one_skill_one_persistent_project` campaigns remain readable and migrate only when their active binding matches.
 - `rights`: all three booleans must be true before generation.
 - `offer`: substantiated value proposition, CTA, and optional destination URL.
 - `locales`: one or more selected mappings from the fixed set `en→en`, `ja→ja`, `yue→zh-Hant`; defaults to all three.
@@ -14,6 +14,7 @@
 - `automation.max_attempts`: maximum `3`.
 - `automation.builder_skill_id`: defaults to Makaron's built-in `tiktok-video` Remotion builder; an explicit compatible builder can override it.
 - `audio.tts_voice`: defaults to `natural energetic young-adult female`.
+- `audio.tts_volume_by_locale`: optional voiceover-only gain map for `en`, `ja`, and `yue`; defaults to `1.0` and accepts `0.5–2.0` without changing BGM volume.
 - `audio.bgm_prompt`: original instrumental direction for the campaign's one `makaron music create` node; defaults to at least 20 seconds, no vocals, no early fade-out, and loop-friendly.
 - `audio.bgm_style`: `--style` value for `makaron music create`.
 - `audio.bgm_volume`: Remotion relative mix volume under TTS, default `0.22` and maximum `0.5`.
@@ -27,11 +28,11 @@
 - `output.duration_seconds`: final maximum retained for backward compatibility, default `20`.
 - `output.width` / `output.height`: preferred export target `1080×1920`.
 - `output.minimum_width` / `output.minimum_height`: hard acceptance floor `720×1280` at 9:16.
-- `output.safe_zone`: default `meta-reels` overlay protection: top `250`, bottom `340`, left `90`, right `180`, caption top `270`, maximum `20` visible characters per line.
+- `output.safe_zone`: default `meta-reels` overlay protection stored as both the 1080×1920 reference pixels and canvas-relative ratios: top and caption top `250/1920`, bottom `340/1920`, left `90/1080`, right `180/1080`, one-line-first layout with a maximum `32` visible characters before wrapping. Caption top is locked to the top safe boundary, including when resuming legacy Campaigns. Ratio fields are authoritative for layout at non-reference preview sizes; legacy pixel-only Campaigns remain readable.
 
 `catalog_json` remains available for offline/reproducible v5 workflow generation. By default the production DAG runs the bundled v5 synthetic renderer against live `makaron skills list --json` metadata, passing the resolved Skill ID and only the selected mapped UI locale.
 
-The final assembly order is fixed: Effect-derived Hook video → comparison image → localized v5 workflow video → later non-overlapping Result video → bundled Logo CTA video. Hook and Result share one target-Skill Effect source hash and cannot reuse the same source frames. Makaron selects the strongest exact source frame from the complete Effect video for After and composes the comparison; v5 creates each localized workflow with deterministic QC. Voiceover defaults to a natural energetic young-adult female Seed Audio voice and must finish before the CTA excerpt. One BGM is generated separately with `makaron music create`, then passed with every visual asset to one project-bound `makaron chat` request using the built-in `tiktok-video` Remotion builder. The runtime derives Caption JSON and scene boundaries from measured narration timings, mutes all video source audio, loops that BGM through CTA, burns one Meta-safe subtitle set, and directly exports the MP4. There is no local final concat/amix/ASS/PIL stage.
+The final assembly order is fixed: Effect-derived Hook video → comparison image → localized v5 workflow video → later non-overlapping Result video → bundled Logo CTA video. Hook and Result share one target-Skill Effect source hash and cannot reuse the same source frames. Makaron selects the strongest exact source frame from the complete Effect video for After. The CLI alone composes the comparison deterministically on a 1080×1920 black canvas: one common rendered height, full-frame aspect preservation, exactly 10px between the actual rendered image boxes, at least 40px symmetric outer margins, same-baseline labels centered under the actual images 35px below their edge, and pixel-level layout/background QC. No model or external Agent may regenerate or rearrange it. v5 creates each localized workflow with deterministic QC. Voiceover defaults to a natural energetic young-adult female Seed Audio voice and must finish before the CTA excerpt. One BGM is generated separately with `makaron music create`, then passed with every visual asset to one project-bound `makaron chat` request using the built-in `tiktok-video` Remotion builder. The runtime derives Caption JSON and scene boundaries from measured narration timings, mutes all video source audio, loops that BGM through CTA, burns one Meta-safe subtitle set, and directly exports the MP4. There is no local final concat/amix/ASS/PIL stage; deterministic local Pillow use is limited to the standalone comparison image.
 
 Timing is adaptive within measured bounds: Hook normally 2.5 seconds (shorter only when a short Effect must preserve at least 3 seconds of Result), comparison about 2.5 seconds, workflow about 4 seconds, result at least 3 seconds, and final duration 15–20 seconds. See [reference-editing-rhythm.md](reference-editing-rhythm.md) when modifying those bounds.
 

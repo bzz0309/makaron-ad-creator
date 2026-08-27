@@ -75,3 +75,11 @@ When an upstream cloud generation already has an authoritative public URL, store
 ## Bind persistent-project designs to the current campaign
 
 A long-lived project can contain visually similar media and music from earlier campaigns. Attachment order in the prompt is not enough: validate and overwrite the Remotion media props with the exact current campaign URLs before rendering, then retain an asset-binding manifest. This is deterministic correction of declared inputs, not creative regeneration.
+
+## Balance subtitle wrapping instead of forcing every caption to one line
+
+Prefer a single physical line and reduce type responsively within the legible range. When a localized caption genuinely needs two lines, split by measured rendered width near the visual midpoint. For English captions with six or more words, keep at least three words on both lines; never leave a one- or two-word orphan. Keep newline characters out of the caption data so Remotion—not the script—owns layout.
+
+## Separate creative retry budgets from transport and account failures
+
+An artifact download failure or insufficient-credit response does not imply that the generated creative is bad. Stop and preserve the node instead of switching models or repeating generation. Resume the same node after the CDN or account condition is repaired, and use stable HTTP/1.1 transfer when an HTTP/2 CDN path is unreliable.

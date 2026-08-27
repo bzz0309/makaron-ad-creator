@@ -6,10 +6,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from makaron_ad_creator.util import download
+from makaron_ad_creator.util import AdCreatorError, download, run
 
 
 class UtilTests(unittest.TestCase):
+    def test_run_can_preserve_nonzero_stdout_when_check_is_disabled(self) -> None:
+        failed = SimpleNamespace(stdout='{"status":"failed","result":{"designs":[]}}', stderr="", returncode=1)
+        with patch("makaron_ad_creator.util.subprocess.run", return_value=failed):
+            result = run(["makaron", "responses", "get", "run-1"], check=False)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn('"status":"failed"', result.stdout)
+            with self.assertRaisesRegex(AdCreatorError, "Command failed"):
+                run(["makaron", "responses", "get", "run-1"])
+
     def test_download_prefers_curl_and_atomically_moves_nonempty_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             destination = Path(temp_name) / "assets" / "artifact.mp4"
@@ -28,6 +37,7 @@ class UtilTests(unittest.TestCase):
             command = mocked_run.call_args.args[0]
             self.assertIn("--retry", command)
             self.assertIn("--fail", command)
+            self.assertIn("--http1.1", command)
 
 
 if __name__ == "__main__":

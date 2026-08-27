@@ -54,7 +54,13 @@ def require_binary(name: str) -> str:
     return resolved
 
 
-def run(command: list[str], *, cwd: Path | None = None, timeout: int = 900) -> subprocess.CompletedProcess[str]:
+def run(
+    command: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: int = 900,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
             command,
@@ -67,10 +73,15 @@ def run(command: list[str], *, cwd: Path | None = None, timeout: int = 900) -> s
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise AdCreatorError(f"Command failed to start: {command[0]}: {exc}") from exc
-    if result.returncode:
+    if check and result.returncode:
         message = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         raise AdCreatorError(f"Command failed ({command[0]}): {message[-3000:]}")
     return result
+
+
+def project_binding_key(skill_id: str, image: Path) -> str:
+    """Return the stable registry key for one Skill and one exact authorized input."""
+    return f"{skill_id}:{sha256(image)[:12]}"
 
 
 def json_candidates(text: str) -> Iterable[Any]:
@@ -143,6 +154,7 @@ def download(url: str, destination: Path) -> Path:
             run([
                 curl,
                 "--fail",
+                "--http1.1",
                 "--location",
                 "--silent",
                 "--show-error",
@@ -155,13 +167,13 @@ def download(url: str, destination: Path) -> Path:
                 "--max-time",
                 "600",
                 "--user-agent",
-                "makaron-ad-creator/0.6.0",
+                "makaron-ad-creator/0.6.3",
                 "--output",
                 str(temp_path),
                 url,
             ], timeout=660)
         else:
-            request = urllib.request.Request(url, headers={"User-Agent": "makaron-ad-creator/0.6.0"})
+            request = urllib.request.Request(url, headers={"User-Agent": "makaron-ad-creator/0.6.3"})
             with urllib.request.urlopen(request, timeout=120) as response, temp_path.open("wb") as handle:
                 shutil.copyfileobj(response, handle)
     except Exception as exc:

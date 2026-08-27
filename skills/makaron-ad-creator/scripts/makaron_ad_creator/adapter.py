@@ -105,6 +105,14 @@ class MakaronAdapter:
                 downloadable = urls
             if not downloadable:
                 if require_generated_video and allow_remotion_fallback:
+                    if extract_remotion_design(raw):
+                        return {
+                            "response_id": response_id,
+                            "media_urls": urls,
+                            "response": raw,
+                            "response_path": str(response_path),
+                            "remotion_design_only": True,
+                        }
                     fallback = self.render_remotion_fallback(node_id, raw, destination, contract=remotion_contract)
                     return {
                         "response_id": response_id,
@@ -187,6 +195,7 @@ class MakaronAdapter:
             )
         if contract != "ad-final":
             raise AdCreatorError(f"Unknown Remotion fallback contract: {contract}")
+        sanitize_caption_text(design["props"])
         validate_ad_remotion_design(design)
         design_path = self.run_dir / "responses" / f"{node_id}.remotion-design.json"
         write_json(design_path, design)
@@ -275,16 +284,21 @@ class MakaronAdapter:
         *,
         required_kind: str | None = None,
     ) -> tuple[Any, list[str]]:
+        # Read the completed response before asking the CLI to materialize it.
+        # A Remotion response can contain a complete editable design even when
+        # the platform MP4 export is Forbidden.  Putting --materialize first
+        # made that valid fallback wait for the materializer timeout (up to 30
+        # minutes) before the local renderer could take over.
         attempts = [
-            [self.binary, "responses", "get", response_id, "--wait", "--materialize", "--json"],
-            [self.binary, "responses", "get", response_id, "--wait", "--json"],
-            [self.binary, "responses", "get", response_id, "--json"],
+            ([self.binary, "responses", "get", response_id, "--wait", "--json"], 600),
+            ([self.binary, "responses", "get", response_id, "--json"], 120),
+            ([self.binary, "responses", "get", response_id, "--wait", "--materialize", "--json"], 600),
         ]
         last = fallback
-        for command in attempts:
+        for command, timeout in attempts:
             self._log(node_id + "-poll", command)
             try:
-                result = run(command, timeout=1800)
+                result = run(command, timeout=timeout, check=False)
             except AdCreatorError:
                 continue
             values = list(json_candidates(result.stdout))
@@ -396,6 +410,26 @@ def extract_remotion_design(response: Any) -> dict[str, Any] | None:
     return None
 
 
+def sanitize_caption_text(props: dict[str, Any]) -> int:
+    """Remove manual caption line breaks so Remotion can wrap inside the safe zone."""
+    captions = props.get("captions")
+    if not isinstance(captions, list):
+        return 0
+    changed = 0
+    for caption in captions:
+        if not isinstance(caption, dict):
+            continue
+        for key in ("text", "display"):
+            value = caption.get(key)
+            if not isinstance(value, str):
+                continue
+            normalized = re.sub(r"\s+", " ", value.replace("\\n", " ").replace("\n", " ")).strip()
+            if normalized != value:
+                caption[key] = normalized
+                changed += 1
+    return changed
+
+
 def validate_ad_remotion_design(design: dict[str, Any]) -> None:
     """Reject stale/hand-timed designs that predate the synchronized ad contract."""
     props = design.get("props")
@@ -452,13 +486,35 @@ def validate_timing_manifest(props: dict[str, Any]) -> None:
     safe = props.get("safeZone")
     if not isinstance(safe, dict):
         raise AdCreatorError("Remotion timing manifest is missing the Meta safeZone")
-    safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
-    for key, minimum in safe_minimums.items():
-        if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
-            raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
+    ratio_minimums = {
+        "topRatio": 250 / 1920,
+        "bottomRatio": 340 / 1920,
+        "leftRatio": 90 / 1080,
+        "rightRatio": 180 / 1080,
+        "captionTopRatio": 250 / 1920,
+    }
+    # Makaron commonly serializes normalized ratios to six decimal places.
+    # Accept sub-micro rounding drift while continuing to reject a materially
+    # smaller safe zone.
+    ratio_epsilon = 1e-6
+    if all(key in safe for key in ratio_minimums):
+        for key, minimum in ratio_minimums.items():
+            ratio = numeric(safe.get(key), f"safeZone.{key}")
+            if ratio + ratio_epsilon < minimum or ratio >= 1:
+                raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum:.6f} and below 1")
+        if abs(numeric(safe["captionTopRatio"], "safeZone.captionTopRatio") - numeric(safe["topRatio"], "safeZone.topRatio")) > ratio_epsilon:
+            raise AdCreatorError("Remotion safeZone.captionTopRatio must equal topRatio at the highest Meta-safe position")
+    else:
+        # Contract-v2 designs created before proportional safe zones remain valid at 1080x1920.
+        safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
+        for key, minimum in safe_minimums.items():
+            if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
+                raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
+        if numeric(safe.get("captionTopPx"), "safeZone.captionTopPx") != numeric(safe.get("topPx"), "safeZone.topPx"):
+            raise AdCreatorError("Remotion safeZone.captionTopPx must equal topPx at the highest Meta-safe position")
     maximum_characters = numeric(safe.get("maxCharactersPerLine", 0), "safeZone.maxCharactersPerLine")
-    if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 21):
-        raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 20")
+    if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 33):
+        raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 32")
     captions = props.get("captions")
     if not isinstance(captions, list) or len(captions) != 5:
         raise AdCreatorError("Remotion design must contain exactly five timed Caption objects")

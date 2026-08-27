@@ -1,21 +1,34 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
+import socket
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, validate_ad_remotion_design, validate_timing_manifest
-from .media import bgm_similarity_in_cta, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
-from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
+from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, sanitize_caption_text, validate_ad_remotion_design, validate_timing_manifest
+from .media import bgm_similarity_in_cta, comparison_layout_qc, compose_comparison, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
+from .prompts import after_prompt, before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
-from .util import AdCreatorError, read_json, run as run_command, sha256, write_json
+from .util import AdCreatorError, project_binding_key, read_json, run as run_command, sha256, write_json
 
 
-MODELS = ["seedance-2-0", "seedance-fast", "grok"]
+MODELS = ["seedance-2-0", "kling", "grok"]
 MAX_MAKARON_UPLOAD_BYTES = 4 * 1024 * 1024
+FIRST_PERSON_MARKERS = {
+    "en": re.compile(r"\b(?:i|me|my|mine|myself)\b", re.IGNORECASE),
+    "ja": re.compile(r"(?:私|わたし|ワタシ|僕|ぼく|ボク|うち|自分)"),
+    "yue": re.compile(r"(?:我|我嘅)"),
+}
+DETACHED_PERSON_MARKERS = {
+    "en": re.compile(r"\b(?:she|her|hers|he|him|his|they|them|their|theirs)\b", re.IGNORECASE),
+    "ja": re.compile(r"(?:彼女|彼氏|彼ら|彼は|彼が|彼の|この女性|この女の子|この人)"),
+    "yue": re.compile(r"(?:佢哋|佢|呢個女仔|呢個女人|呢個人)"),
+}
 
 
 def cached_final_design_matches_effect_segments(
@@ -44,6 +57,8 @@ def is_non_retryable_error(exc: Exception) -> bool:
     return any(marker in message for marker in (
         "request entity too large",
         "function_payload_too_large",
+        "insufficient_credits",
+        "cannot download generated artifact",
         "returned no exported final mp4",
         "unsupported locale",
         "unknown node",
@@ -65,7 +80,7 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "result", "kind": "local", "depends_on": ["effect"]},
         {"id": "bgm", "kind": "generate_audio", "depends_on": ["validate"]},
         {"id": "after", "kind": "generate_image", "depends_on": ["effect"]},
-        {"id": "comparison", "kind": "generate_image", "depends_on": ["before", "after"]},
+        {"id": "comparison", "kind": "local", "depends_on": ["before", "after"]},
     ]
     selected_locales = ad_locales(config)
     for locale in selected_locales:
@@ -139,40 +154,70 @@ class Pipeline:
     def ready(self, node: dict[str, Any]) -> bool:
         return all(self.state["nodes"][dep]["status"] == "PASS" for dep in node["depends_on"])
 
+    def _recover_orphaned_running(self) -> None:
+        """Return nodes left RUNNING by an interrupted process to a resumable state."""
+        runner = self.state.get("runner") if isinstance(self.state.get("runner"), dict) else {}
+        runner_pid = int(runner.get("pid") or 0)
+        same_host = runner.get("host") == socket.gethostname()
+        runner_alive = False
+        if runner_pid > 0 and same_host:
+            try:
+                os.kill(runner_pid, 0)
+                runner_alive = True
+            except ProcessLookupError:
+                runner_alive = False
+            except PermissionError:
+                runner_alive = True
+        if self.state.get("status") == "RUNNING" and runner_alive and runner_pid != os.getpid():
+            raise AdCreatorError(f"Campaign is already running in process {runner_pid}")
+
+        recovered: list[str] = []
+        for node_id, node_state in self.state["nodes"].items():
+            if node_state.get("status") != "RUNNING":
+                continue
+            node_state["status"] = "PENDING"
+            node_state["attempts"] = max(0, int(node_state.get("attempts", 0)) - 1)
+            node_state["recovered_at"] = now()
+            node_state["recovery_reason"] = "previous runner exited before recording node completion"
+            recovered.append(node_id)
+        if recovered or self.state.get("status") == "RUNNING":
+            self.state["status"] = "PENDING"
+            self.state.pop("runner", None)
+            self.state.setdefault("recoveries", []).append({"at": now(), "nodes": recovered})
+            self.save()
+
+    def _finish_run(self, status: str) -> str:
+        self.state["status"] = status
+        self.state.pop("runner", None)
+        self.save()
+        return status
+
     def run(self) -> str:
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self._recover_orphaned_running()
         self.state["status"] = "RUNNING"
+        self.state["runner"] = {"pid": os.getpid(), "host": socket.gethostname(), "started_at": now()}
         self.save()
         while True:
             pending = [node for node in self.plan if self.state["nodes"][node["id"]]["status"] != "PASS"]
             if not pending:
-                self.state["status"] = "PASS"
-                self.save()
-                return "PASS"
+                return self._finish_run("PASS")
             progressed = False
             for node in pending:
                 node_state = self.state["nodes"][node["id"]]
                 if node_state["status"] == "WAITING_FOR_AGENT":
-                    self.state["status"] = "WAITING_FOR_AGENT"
-                    self.save()
-                    return "WAITING_FOR_AGENT"
+                    return self._finish_run("WAITING_FOR_AGENT")
                 if node_state["status"] == "BLOCKED":
-                    self.state["status"] = "BLOCKED"
-                    self.save()
-                    return "BLOCKED"
+                    return self._finish_run("BLOCKED")
                 if not self.ready(node):
                     continue
                 if self.executor == "agent" and node["kind"].startswith("generate_"):
                     self._write_agent_request(node)
-                    self.state["status"] = "WAITING_FOR_AGENT"
-                    self.save()
-                    return "WAITING_FOR_AGENT"
+                    return self._finish_run("WAITING_FOR_AGENT")
                 self._execute_with_budget(node)
                 progressed = True
                 if self.state["nodes"][node["id"]]["status"] == "BLOCKED":
-                    self.state["status"] = "BLOCKED"
-                    self.save()
-                    return "BLOCKED"
+                    return self._finish_run("BLOCKED")
             if not progressed:
                 raise AdCreatorError("Pipeline cannot progress; inspect state.json dependencies")
 
@@ -240,14 +285,39 @@ class Pipeline:
         registry_path = self.campaign_dir.parent.parent / "project-registry.json"
         skill_id = self.config["target_skill"]["id"]
         project_id = self.config["project_binding"]["project_id"]
-        registry = read_json(registry_path) if registry_path.exists() else {"version": 1, "bindings": {}}
-        current = registry["bindings"].get(skill_id)
+        image = Path(self.config["input_image"])
+        binding_key = project_binding_key(skill_id, image)
+        registry = read_json(registry_path) if registry_path.exists() else {"version": 2, "bindings": {}, "history": {}}
+        registry["version"] = 2
+        bindings = registry.setdefault("bindings", {})
+        current = bindings.get(binding_key)
+        legacy = bindings.get(skill_id)
+        if not current and legacy == project_id:
+            current = legacy
+        history = registry.setdefault("history", {})
+        historical_projects = {
+            str(item.get("project_id"))
+            for item in history.get(binding_key, [])
+            if isinstance(item, dict) and item.get("project_id")
+        }
+        historical_resume = bool(current and current != project_id and project_id in historical_projects)
         if current and current != project_id:
-            raise AdCreatorError(f"Skill {skill_id} is already bound to project {current}; migration requires explicit registry edit")
-        for existing_skill, existing_project in registry["bindings"].items():
-            if existing_project == project_id and existing_skill != skill_id:
+            if not historical_resume:
+                raise AdCreatorError(f"Skill+input {binding_key} is already bound to project {current}; migration requires explicit registry edit")
+        for existing_key, existing_project in bindings.items():
+            if existing_project != project_id or existing_key in {binding_key, skill_id}:
+                continue
+            existing_skill = existing_key.split(":", 1)[0]
+            if existing_skill != skill_id:
                 raise AdCreatorError(f"Project {project_id} is already bound to another Skill: {existing_skill}")
-        registry["bindings"][skill_id] = project_id
+            raise AdCreatorError(f"Project {project_id} is already bound to another input image for Skill {skill_id}")
+        if not historical_resume:
+            bindings[binding_key] = project_id
+            registry.setdefault("metadata", {})[binding_key] = {
+                "skill_id": skill_id,
+                "input_sha256": sha256(image),
+                "active_project_id": project_id,
+            }
         write_json(registry_path, registry)
         write_json(self.campaign_dir / "project-binding.json", self.config["project_binding"])
 
@@ -270,13 +340,17 @@ class Pipeline:
                 raise AdCreatorError(f"scripts.{locale} must contain exactly five non-empty strings")
             if self.config["target_skill"]["name"].casefold() in lines[0].casefold():
                 raise AdCreatorError(f"scripts.{locale}[0] must be a result-driven Hook and must not repeat the Skill name")
+            joined = " ".join(line.strip() for line in lines)
+            if not FIRST_PERSON_MARKERS[locale].search(joined):
+                raise AdCreatorError(f"scripts.{locale} must establish the user or creator as a first-person speaker")
+            if DETACHED_PERSON_MARKERS[locale].search(joined):
+                raise AdCreatorError(f"scripts.{locale} must not switch to detached third-person narration")
 
     def _generate_before(self) -> None:
         output = self.run_dir / "assets" / "before.png"
         result = self._adapter().chat(
             node_id="before",
             prompt=before_prompt(self.config),
-            images=[Path(self.config["input_image"])],
             destination=output,
             require_generated_image=True,
         )
@@ -288,7 +362,6 @@ class Pipeline:
             node_id="effect",
             prompt=effect_prompt(self.config, MODELS[min(attempt - 1, len(MODELS) - 1)]),
             skill_id=self.config["target_skill"]["id"],
-            images=[Path(self.config["input_image"])],
             destination=output,
         )
         info = probe_video(output)
@@ -304,10 +377,26 @@ class Pipeline:
             raise AdCreatorError(f"Unknown target-Skill segment role: {role}")
         effect = self.artifact("effect", ".mp4")
         plan = effect_segment_plan(effect)
-        start = float(plan[f"{role}_start"])
-        duration = float(plan[f"{role}_duration"])
+        segment_override = self.config.get("effect_segments", {}).get(role, {})
+        start = float(segment_override.get("start_seconds", plan[f"{role}_start"]))
+        end = float(segment_override.get("end_seconds", start + float(plan[f"{role}_duration"])))
+        duration = end - start
+        playback_speed = float(segment_override.get("playback_speed", 1.0))
+        source_duration = float(plan["source_duration"])
+        if start < 0 or duration <= 0 or end > source_duration + 0.05:
+            raise AdCreatorError(
+                f"Configured {role} range {start:.3f}-{end:.3f}s exceeds Effect duration {source_duration:.3f}s"
+            )
+        if playback_speed < 1.0 or playback_speed > 2.0:
+            raise AdCreatorError(f"Configured {role} playback_speed must be between 1.0 and 2.0")
         output = self.run_dir / "assets" / f"{role}.mp4"
-        extract_video_segment(effect, output, start_seconds=start, duration_seconds=duration)
+        extract_video_segment(
+            effect,
+            output,
+            start_seconds=start,
+            duration_seconds=duration,
+            playback_speed=playback_speed,
+        )
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError(f"Derived {role} video must be vertical 9:16 and at least 720x1280")
@@ -318,6 +407,8 @@ class Pipeline:
             source_effect_sha256=sha256(effect),
             start_seconds=start,
             duration_seconds=duration,
+            output_duration_seconds=float(info["duration"]),
+            playback_speed=playback_speed,
             resolution=f"{info['width']}x{info['height']}",
         )
 
@@ -355,17 +446,25 @@ class Pipeline:
 
     def _generate_comparison(self) -> None:
         output = self.run_dir / "assets" / "comparison.png"
-        result = self._adapter().chat(
-            node_id="comparison",
-            prompt=comparison_prompt(self.config),
-            images=[self.artifact("before"), self.artifact("after")],
-            destination=output,
-            require_generated_image=True,
-        )
+        before = self.artifact("before")
+        after = self.artifact("after")
+        compose_comparison(before, after, output)
+        qc = comparison_layout_qc(before, after, output)
+        qc_path = self.run_dir / "qc" / "comparison-layout.json"
+        write_json(qc_path, qc)
         info = probe_image(output)
-        if not is_vertical_resolution_acceptable(info, self.config["output"]):
-            raise AdCreatorError("Makaron comparison must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("comparison", output, response_id=result.get("response_id"), source_url=result.get("source_url"), source="makaron-composition", resolution=f"{info['width']}x{info['height']}")
+        if (int(info["width"]), int(info["height"])) != (1080, 1920):
+            raise AdCreatorError("Deterministic comparison must be exactly 1080x1920")
+        self.add_artifact(
+            "comparison",
+            output,
+            source="deterministic-local-common-height-composition",
+            resolution="1080x1920",
+            before_sha256=sha256(before),
+            after_sha256=sha256(after),
+            qc_report=str(qc_path.resolve()),
+            common_h=int(qc["layout"]["common_h"]),
+        )
 
     def _generate_workflow(self, ad_locale: str) -> None:
         node_id = f"workflow-{ad_locale}"
@@ -432,11 +531,15 @@ class Pipeline:
         return str(self.artifact("bgm"))
 
     def _final_video_input(self, node_id: str, path: Path, *, role: str) -> str:
+        info = probe_video(path)
+        target_width = int(self.config["output"]["width"])
+        target_height = int(self.config["output"]["height"])
+        target_sized = int(info["width"]) == target_width and int(info["height"]) == target_height
         if node_id in self.state["nodes"]:
             items = self.state["nodes"][node_id].get("artifacts", [])
             if items:
                 source_url = str(items[0].get("source_url") or "")
-                if source_url.startswith(("https://", "http://")):
+                if source_url.startswith(("https://", "http://")) and target_sized:
                     return source_url
                 if items[0].get("source") == "exact-non-overlapping-effect-segment":
                     return self._adapter().publish_local_media(self._upload_safe_video(path, role), role=role)
@@ -448,25 +551,32 @@ class Pipeline:
         return self._adapter().publish_local_media(self._upload_safe_video(path, role), role=role)
 
     def _upload_safe_video(self, path: Path, role: str) -> Path:
-        """Create a 720p transport copy when Makaron's upload endpoint would reject the source."""
-        if path.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES:
+        """Create a dimension-stable 1080p transport copy within Makaron's upload limit."""
+        target_width = int(self.config["output"]["width"])
+        target_height = int(self.config["output"]["height"])
+        source_info = probe_video(path)
+        if (
+            path.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES
+            and int(source_info["width"]) == target_width
+            and int(source_info["height"]) == target_height
+        ):
             return path
-        output = self.run_dir / "uploads" / f"{role}-720p.mp4"
+        output = self.run_dir / "uploads" / f"{role}-1080p.mp4"
         output.parent.mkdir(parents=True, exist_ok=True)
-        command = [
-            "ffmpeg", "-y", "-i", str(path),
-            "-vf", "scale=720:1280:force_original_aspect_ratio=decrease,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black",
-            "-c:v", "libx264", "-preset", "veryfast", "-b:v", "1800k",
-            "-maxrate", "2200k", "-bufsize", "4400k", "-pix_fmt", "yuv420p",
-            "-an", "-movflags", "+faststart", str(output),
-        ]
-        run_command(command)
-        info = probe_video(output)
-        if int(info["width"]) != 720 or int(info["height"]) != 1280:
-            raise AdCreatorError(f"Upload-safe {role} video must be 720x1280")
-        if output.stat().st_size > MAX_MAKARON_UPLOAD_BYTES:
-            raise AdCreatorError(f"Upload-safe {role} video still exceeds Makaron's 4 MiB request limit")
-        return output
+        for crf in (22, 26, 30, 34, 38):
+            command = [
+                "ffmpeg", "-y", "-i", str(path),
+                "-vf", f"scale={target_width}:{target_height}:force_original_aspect_ratio=decrease,pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:black",
+                "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+                "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", str(output),
+            ]
+            run_command(command)
+            info = probe_video(output)
+            if int(info["width"]) != target_width or int(info["height"]) != target_height:
+                raise AdCreatorError(f"Upload-safe {role} video must be {target_width}x{target_height}")
+            if output.stat().st_size <= MAX_MAKARON_UPLOAD_BYTES:
+                return output
+        raise AdCreatorError(f"Upload-safe {role} video still exceeds Makaron's 4 MiB request limit at 1080p")
 
     def _final_video_inputs(self, locale: str) -> list[str]:
         return [
@@ -510,15 +620,19 @@ class Pipeline:
         cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
         cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
         cached_design = extract_remotion_design(cached_response) if cached_response else None
+        voiceover_volume = float(self.config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.0))
         cached_contract_valid = False
+        caption_text_changes = 0
         if attempt == 1 and cached_design:
             try:
+                cached_design["props"]["voiceoverVolume"] = voiceover_volume
                 cached_binding_changes = bind_ad_remotion_assets(
                     cached_design,
                     comparison_image=comparison_input,
                     videos=videos,
                     bgm_url=bgm_input,
                 )
+                caption_text_changes = sanitize_caption_text(cached_design["props"])
                 cached_contract_valid = cached_final_design_matches_effect_segments(
                     cached_design,
                     hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
@@ -548,15 +662,26 @@ class Pipeline:
             final_design = extract_remotion_design(result.get("response"))
             if not final_design:
                 raise AdCreatorError("Final Remotion output is missing the required caption/scene timing contract")
+            final_design["props"]["voiceoverVolume"] = voiceover_volume
             binding_changes = bind_ad_remotion_assets(
                 final_design,
                 comparison_image=comparison_input,
                 videos=videos,
                 bgm_url=bgm_input,
             )
+            caption_text_changes = sanitize_caption_text(final_design["props"])
             validate_ad_remotion_design(final_design)
-            if binding_changes:
-                corrected = adapter.render_remotion_fallback(node_id, result["response"], output)
+            if not cached_final_design_matches_effect_segments(
+                final_design,
+                hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
+                result_duration=float(probe_video(self.artifact("result", ".mp4"))["duration"]),
+            ):
+                raise AdCreatorError(
+                    "Final Remotion scene durations do not match the current user-selected Hook/Result clips"
+                )
+            if binding_changes or result.get("remotion_design_only") or not output.is_file():
+                corrected_response = {"result": {"designs": [final_design]}}
+                corrected = adapter.render_remotion_fallback(node_id, corrected_response, output)
                 result["render_fallback"] = corrected
         binding_manifest = self.run_dir / "final" / f"asset-bindings-{locale}.json"
         write_json(binding_manifest, {
@@ -566,7 +691,9 @@ class Pipeline:
             "workflowVideo": videos[2],
             "ctaVideo": videos[3],
             "bgmUrl": bgm_input,
+            "voiceoverVolume": voiceover_volume,
             "corrected_stale_props": binding_changes,
+            "caption_text_values_sanitized": caption_text_changes,
         })
         timing_manifest = self.run_dir / "final" / f"timing-manifest-{locale}.json"
         write_json(timing_manifest, final_design["props"])
@@ -606,8 +733,10 @@ class Pipeline:
             composition_contract_version=2,
             asset_binding_manifest=str(binding_manifest.resolve()),
             stale_project_assets_corrected=binding_changes,
+            caption_text_values_sanitized=caption_text_changes,
             render_fallback=result.get("render_fallback"),
             voiceover_script=scripts[locale],
+            voiceover_volume=voiceover_volume,
         )
 
     def _qc(self) -> None:
@@ -784,9 +913,9 @@ class Pipeline:
         if node_id == "scripts":
             request.update({"operation": "generate_json", "prompt": script_prompt(self.config), "expected": "scripts.json"})
         elif node_id == "before":
-            request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [self.config["input_image"]], "expected": "before.png"})
+            request.update({"operation": "generate_image", "prompt": before_prompt(self.config), "images": [], "project_media_refs": ["<<<media_1>>>"], "expected": "before.png"})
         elif node_id == "effect":
-            request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [self.config["input_image"]], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
+            request.update({"operation": "invoke_skill_video", "prompt": effect_prompt(self.config, model_preference), "images": [], "project_media_refs": ["<<<media_1>>>"], "target_skill_id": self.config["target_skill"]["id"], "expected": "effect.mp4", "minimum_resolution": "720x1280"})
         elif node_id == "after":
             request.update({
                 "operation": "select_exact_effect_keyframe",
@@ -794,14 +923,6 @@ class Pipeline:
                 "videos": [str(self.artifact("effect", ".mp4"))],
                 "selection_rule": "analyze full clip and export the strongest exact decoded source frame; never regenerate",
                 "expected": "after.png",
-            })
-        elif node_id == "comparison":
-            request.update({
-                "operation": "compose_comparison_in_makaron",
-                "prompt": comparison_prompt(self.config),
-                "images": [str(self.artifact("before")), str(self.artifact("after"))],
-                "input_roles": ["locked_before", "locked_exact_effect_keyframe"],
-                "expected": "comparison.png",
             })
         elif node_id == "bgm":
             request.update({
@@ -832,6 +953,10 @@ class Pipeline:
                 "composition": {
                     "engine": "makaron-agent-remotion",
                     "builder_skill_id": self.config.get("automation", {}).get("builder_skill_id", "tiktok-video"),
+                    "width": self.config["output"]["width"],
+                    "height": self.config["output"]["height"],
+                    "fps": 30,
+                    "dimensions_must_not_follow_source_media": True,
                     "one_project_bound_chat": True,
                     "tts_engine": "seed-audio",
                     "caption_format": "remotion-caption-json",

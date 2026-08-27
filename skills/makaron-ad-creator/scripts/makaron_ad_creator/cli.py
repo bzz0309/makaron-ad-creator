@@ -11,10 +11,11 @@ from pathlib import Path
 
 from .pipeline import Pipeline, plan_for
 from .schema import DEFAULT_AD_LOCALES, DEFAULT_LOGO_CTA, campaign_template, locale_config, validate_config
-from .util import AdCreatorError, json_candidates, read_json, run, sha256, slug, write_json
+from .util import AdCreatorError, json_candidates, project_binding_key, read_json, run, sha256, slug, write_json
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_MEDIA_ROTATION_THRESHOLD = 60
 
 
 def _workspace_root() -> Path:
@@ -31,6 +32,34 @@ def _parse_ad_locales(raw: str | None) -> list[str]:
     selected = [value.strip().lower() for value in raw.split(",") if value.strip()]
     locale_config(selected)
     return selected
+
+
+def resolve_campaign_path(reference: str) -> Path:
+    """Resolve a campaign.json path from a file, directory, or campaign id."""
+    raw = Path(reference).expanduser()
+    candidates: list[Path] = []
+    if raw.is_absolute() or raw.exists() or len(raw.parts) > 1:
+        candidates.extend([raw, raw / "campaign.json"])
+    else:
+        candidates.extend([
+            _workspace_root() / "campaigns" / reference / "campaign.json",
+            PROJECT_ROOT / "campaigns" / reference / "campaign.json",
+            raw,
+            raw / "campaign.json",
+        ])
+    checked: list[str] = []
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if str(resolved) in checked:
+            continue
+        checked.append(str(resolved))
+        if resolved.is_dir():
+            resolved = resolved / "campaign.json"
+        if resolved.is_file() and resolved.name == "campaign.json":
+            return resolved
+    raise AdCreatorError(
+        f"Campaign not found: {reference}. Pass a campaign ID, campaign directory, or full campaign.json path."
+    )
 
 
 def _resolve_marketplace_skill(skill_name: str, binary: str) -> dict:
@@ -67,12 +96,25 @@ def _skill_core(skill: dict, display_name: str) -> str:
     return f"apply the Marketplace Skill named {display_name} to the authorized input image"
 
 
-def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: str, image: Path) -> str:
-    registry_path = workspace / "project-registry.json"
-    registry = read_json(registry_path) if registry_path.exists() else {"version": 1, "bindings": {}}
-    existing = registry.setdefault("bindings", {}).get(skill_id)
-    if existing:
-        return str(existing)
+def _project_media_count(binary: str, project_id: str) -> int | None:
+    """Read the current project timeline size without turning a probe failure into a rotation."""
+    try:
+        result = run([binary, "project", "media", project_id, "--json"], timeout=60)
+    except AdCreatorError:
+        return None
+    for candidate in reversed(list(json_candidates(result.stdout))):
+        if isinstance(candidate, dict):
+            media = candidate.get("media")
+            if not isinstance(media, list) and isinstance(candidate.get("result"), dict):
+                media = candidate["result"].get("media")
+            if isinstance(media, list):
+                return len(media)
+        elif isinstance(candidate, list):
+            return len(candidate)
+    return None
+
+
+def _create_bound_project(binary: str, skill_name: str, image: Path) -> str:
     result = run([binary, "create", "--image", str(image), "--title", f"makaron-ad · {skill_name}"], timeout=300)
     match = re.search(r"^\s*ID:\s*(\S+)\s*$", result.stdout, re.MULTILINE)
     if not match:
@@ -82,7 +124,43 @@ def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: 
         project_id = match.group(1)
     if not project_id or project_id == "auto":
         raise AdCreatorError("Makaron created a project but returned no persistent project ID")
-    registry["bindings"][skill_id] = project_id
+    return project_id
+
+
+def _project_for_skill(workspace: Path, binary: str, skill_id: str, skill_name: str, image: Path) -> str:
+    registry_path = workspace / "project-registry.json"
+    registry = read_json(registry_path) if registry_path.exists() else {"version": 2, "bindings": {}, "history": {}}
+    registry["version"] = 2
+    bindings = registry.setdefault("bindings", {})
+    history = registry.setdefault("history", {})
+    binding_key = project_binding_key(skill_id, image)
+    existing = str(bindings.get(binding_key) or "")
+    if existing:
+        media_count = _project_media_count(binary, existing)
+        if media_count is None or media_count < PROJECT_MEDIA_ROTATION_THRESHOLD:
+            registry.setdefault("metadata", {})[binding_key] = {
+                "skill_id": skill_id,
+                "input_sha256": sha256(image),
+                "active_project_id": existing,
+                "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            }
+            write_json(registry_path, registry)
+            return existing
+    project_id = _create_bound_project(binary, skill_name, image)
+    if existing:
+        history.setdefault(binding_key, []).append({
+            "project_id": existing,
+            "reason": "media-capacity",
+            "media_count": media_count,
+            "rotated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        })
+    bindings[binding_key] = project_id
+    registry.setdefault("metadata", {})[binding_key] = {
+        "skill_id": skill_id,
+        "input_sha256": sha256(image),
+        "active_project_id": project_id,
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+    }
     write_json(registry_path, registry)
     return project_id
 
@@ -177,7 +255,7 @@ def command_init(args: argparse.Namespace) -> int:
 
 
 def command_plan(args: argparse.Namespace) -> int:
-    config_path = Path(args.campaign).expanduser().resolve()
+    config_path = resolve_campaign_path(args.campaign)
     config = validate_config(read_json(config_path), config_path)
     plan = {"version": 1, "campaign_id": config["campaign_id"], "nodes": plan_for(config)}
     destination = config_path.parent / "plan.json"
@@ -187,7 +265,7 @@ def command_plan(args: argparse.Namespace) -> int:
 
 
 def command_run(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign), executor=args.executor)
+    pipeline = Pipeline(resolve_campaign_path(args.campaign), executor=args.executor)
     status = pipeline.run()
     payload = {"status": status, "state": str(pipeline.state_path)}
     waiting = next((value for value in pipeline.state["nodes"].values() if value.get("status") == "WAITING_FOR_AGENT"), None)
@@ -198,7 +276,7 @@ def command_run(args: argparse.Namespace) -> int:
 
 
 def command_status(args: argparse.Namespace) -> int:
-    config_path = Path(args.campaign).expanduser().resolve()
+    config_path = resolve_campaign_path(args.campaign)
     state_path = config_path.parent / "state.json"
     if not state_path.exists():
         print(json.dumps({"status": "NOT_STARTED", "state": str(state_path)}, indent=2))
@@ -208,7 +286,7 @@ def command_status(args: argparse.Namespace) -> int:
 
 
 def command_complete(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign), executor="agent")
+    pipeline = Pipeline(resolve_campaign_path(args.campaign), executor="agent")
     pipeline.complete_agent_node(
         args.node,
         Path(args.artifact),
@@ -221,7 +299,7 @@ def command_complete(args: argparse.Namespace) -> int:
 
 
 def command_fail(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign), executor="agent")
+    pipeline = Pipeline(resolve_campaign_path(args.campaign), executor="agent")
     pipeline.fail_agent_node(args.node, args.error)
     status = pipeline.state["nodes"][args.node]["status"]
     print(json.dumps({"status": status, "node": args.node, "state": str(pipeline.state_path)}, indent=2))
@@ -229,7 +307,7 @@ def command_fail(args: argparse.Namespace) -> int:
 
 
 def command_retry(args: argparse.Namespace) -> int:
-    pipeline = Pipeline(Path(args.campaign))
+    pipeline = Pipeline(resolve_campaign_path(args.campaign))
     node_ids = [item["id"] for item in pipeline.plan]
     if args.node not in node_ids:
         raise AdCreatorError(f"Unknown node: {args.node}")
@@ -303,20 +381,20 @@ def parser() -> argparse.ArgumentParser:
     init.set_defaults(func=command_init)
 
     plan = sub.add_parser("plan", help="Print and save the campaign DAG")
-    plan.add_argument("campaign")
+    plan.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     plan.set_defaults(func=command_plan)
 
     execute = sub.add_parser("run", help="Run or resume a campaign")
-    execute.add_argument("campaign")
+    execute.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     execute.add_argument("--executor", choices=("agent", "makaron"))
     execute.set_defaults(func=command_run)
 
     status = sub.add_parser("status", help="Print resumable pipeline state")
-    status.add_argument("campaign")
+    status.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     status.set_defaults(func=command_status)
 
     complete = sub.add_parser("complete", help="Attach an artifact produced by another Agent")
-    complete.add_argument("campaign")
+    complete.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     complete.add_argument("--node", required=True)
     complete.add_argument("--artifact", required=True)
     complete.add_argument("--response-id")
@@ -325,13 +403,13 @@ def parser() -> argparse.ArgumentParser:
     complete.set_defaults(func=command_complete)
 
     fail = sub.add_parser("fail", help="Report a failed Agent request and advance its retry budget")
-    fail.add_argument("campaign")
+    fail.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     fail.add_argument("--node", required=True)
     fail.add_argument("--error", required=True)
     fail.set_defaults(func=command_fail)
 
     retry = sub.add_parser("retry", help="Reset one node and all downstream nodes")
-    retry.add_argument("campaign")
+    retry.add_argument("campaign", help="Campaign ID, campaign directory, or full campaign.json path")
     retry.add_argument("--node", required=True)
     retry.set_defaults(func=command_retry)
 
