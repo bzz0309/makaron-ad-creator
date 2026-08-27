@@ -7,16 +7,16 @@ from .schema import ad_locales
 
 
 LOCALE_RULES = {
-    "en": "Natural conversational US English. Keep every spoken line short and idiomatic.",
-    "ja": "Natural conversational Japanese for Japan. Adapt the emotional register; do not translate literally.",
-    "yue": "Natural spoken Hong Kong Cantonese in Traditional Chinese. Use native Hong Kong pronunciation, never a Mandarin reading, and prefer unambiguous colloquial Cantonese wording.",
+    "en": "Natural conversational US English in the user's first-person I/my voice. Keep every spoken line short and idiomatic.",
+    "ja": "Natural conversational Japanese for Japan as a first-person personal experience. Establish the speaker once with 私, わたし, 僕, ぼく, うち, or 自分; then omit the pronoun when natural. Adapt the emotional register; do not translate literally.",
+    "yue": "Natural spoken Hong Kong Cantonese in Traditional Chinese in the user's first-person 我/我嘅 voice. Use native Hong Kong pronunciation, never a Mandarin reading, and prefer unambiguous colloquial Cantonese wording.",
 }
 
 LOCALE_NAMES = {"en": "English", "ja": "Japanese", "yue": "Hong Kong Cantonese"}
 SCRIPT_ANCHORS = {
-    "en": ["...", "...", "Open Makaron.", "Pick this effect.", "..."],
-    "ja": ["...", "...", "Makaronを開いて。", "この効果を選んで。", "..."],
-    "yue": ["...", "...", "打開 Makaron。", "揀呢個效果。", "..."],
+    "en": ["...", "...", "I opened Makaron.", "I picked this effect.", "..."],
+    "ja": ["...", "...", "Makaronを開いた。", "この効果を選んだ。", "..."],
+    "yue": ["...", "...", "我打開 Makaron。", "我揀咗呢個效果。", "..."],
 }
 
 
@@ -31,6 +31,7 @@ TARGET SKILL NAME: {skill['name']}
 TARGET SKILL CORE: {skill['core']}
 TRANSFORMATION TYPE: {skill.get('transformation_type', 'identity')}
 Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 Open Makaron; 4 select the effect; 5 emotional result.
+Write the complete script as one personal first-person testimonial from the user or creator who supplied the photo. The speaker describes their own input, actions, and result; never switch to a detached narrator or call the depicted subject he, she, they, her, him, 佢, 彼, or 彼女. Lines 3 and 4 describe actions the speaker took, not commands addressed to the viewer. English uses I/my naturally; Cantonese uses 我/我嘅 naturally; Japanese must establish an explicit first-person speaker at least once and may then omit the pronoun where natural. Do not mechanically repeat the pronoun when the language normally drops it.
 Apply these locale rules:
 {locale_rules}
 Line 1 must be a genuine curiosity or surprising-result Hook, must not say or repeat the exact Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
@@ -70,14 +71,6 @@ Export the exact decoded source-video frame at the chosen timestamp. Do not redr
 Target 1080x1920; minimum 720x1280; exact 9:16."""
 
 
-def comparison_prompt(config: dict[str, Any]) -> str:
-    return f"""Create one exact vertical Before/After comparison image inside this bound Makaron project.
-ATTACHED ROLES: image 1 is the ordinary Before; image 2 is the exact keyframe extracted from the {config['target_skill']['name']} effect video.
-Use both attached images as locked source pixels. Do not redraw, regenerate, retouch, relight, restyle, change identity, or invent missing content.
-Compose a 1080x1920 black canvas with two equal side-by-side contain-fit panels and a narrow 10px center gap. Preserve every source pixel: keep the complete face, body/product silhouette, and key effect visible; never crop, zoom past an edge, or use cover-fit. Center each source inside its panel and use black letterbox/pillarbox space when its aspect ratio differs. Put BEFORE under the left panel and AFTER under the right panel in bold white text with a black outline. Keep all key content inside the Meta safe center and do not add any other title, logo, watermark, decoration, or claim.
-Return one newly exported PNG only."""
-
-
 def bgm_prompt(config: dict[str, Any]) -> str:
     audio = config["audio"]
     return f"""Create one original instrumental background-music track for this vertical social ad.
@@ -98,6 +91,26 @@ def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[st
     final_max = float(output["duration_seconds"])
     bgm_volume = float(config["audio"]["bgm_volume"])
     voiceover_volume = float(config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.0))
+    configured_segments = config.get("effect_segments", {})
+    if configured_segments:
+        hook_segment = configured_segments["hook"]
+        result_segment = configured_segments["result"]
+        hook_seconds = (
+            float(hook_segment["end_seconds"]) - float(hook_segment["start_seconds"])
+        ) / float(hook_segment.get("playback_speed", 1.0))
+        result_seconds = (
+            float(result_segment["end_seconds"]) - float(result_segment["start_seconds"])
+        ) / float(result_segment.get("playback_speed", 1.0))
+        effect_scene_rule = (
+            f"Use the entire attached video 1 for Hook for exactly {hook_seconds:.3f}s and the entire attached "
+            f"video 2 for Result for exactly {result_seconds:.3f}s. These user-selected durations override the "
+            "builder's default 2.5-second Hook and any cached scene template."
+        )
+    else:
+        effect_scene_rule = (
+            "Use the full duration of attached video 1 for Hook (normally 2.5s, shorter only when the source "
+            "effect was too short), and use the shortest complete 3-7 second payoff from attached video 2."
+        )
     safe = output["safe_zone"]
     safe_ratios = {
         "top": float(safe["top_ratio"]),
@@ -116,7 +129,7 @@ VOICEOVER MIX LEVEL: serialize props.voiceoverVolume={voiceover_volume:.2f} and 
 If measured narration still exceeds its assigned scene, automatically shorten that line while preserving its meaning, regenerate the matching voice and subtitle text, and continue to export. Never extend, loop, freeze, or slow a source clip to fit narration, and never pause to ask the user a timing question.
 ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the opening Hook segment extracted from the target-Skill effect source; video 2 is the later non-overlapping Result segment from that exact same effect source; video 3 is the locale-correct v5 Makaron workflow; video 4 is the fixed Makaron Logo CTA source; audio 1 is the separately generated instrumental BGM.
 ASSET BINDING: this persistent project may contain media from older campaigns. The Remotion props must use the exact current attachments with these keys: comparisonImage=image 1 URL, hookVideo=video 1 URL, resultVideo=video 2 URL, workflowVideo=video 3 URL, ctaVideo=video 4 URL, bgmUrl=audio 1 URL. Never select an older project image, video, voice, or music asset by recency, filename, or visual similarity. Set the Remotion Composition itself to width={output['width']}, height={output['height']}, fps=30; never infer the composition size from the first attached video.
-LOCKED FINAL ORDER: Hook video; comparison image; localized workflow video; effect/result video; fixed Logo CTA video. Use the full duration of attached video 1 for Hook (normally 2.5s, shorter only when the source effect was too short); comparison exactly 2.5s; workflow 3.5-4.5s; effect/result at least 3.0s; Logo CTA exactly {cta_seconds:.1f}s using the source from {float(config['assets']['logo_cta_start_seconds']):.1f}s. Extend the result segment only long enough to show one complete payoff without repetition.
+LOCKED FINAL ORDER: Hook video; comparison image; localized workflow video; effect/result video; fixed Logo CTA video. {effect_scene_rule} Comparison exactly 2.5s; workflow 3.5-4.5s; Logo CTA exactly {cta_seconds:.1f}s using the source from {float(config['assets']['logo_cta_start_seconds']):.1f}s.
 Use video 1 only for Hook and video 2 only for Result. They are exact, non-overlapping time ranges from one target-Skill effect source. Never reuse, loop, reverse, freeze, or speed-ramp source frames across those two sections, and never request or invent a separately generated Hook.
 Mute the original audio from every attached video, including the Hook, effect video, workflow video, and Logo CTA. Loop audio 1 as the same continuous BGM from 0.0 seconds through the final frame, including throughout the Logo CTA, at relative mix volume {bgm_volume:.2f} under the voiceover. Do not switch tracks, restart with different music, use CTA source audio, add sound effects, or allow a silent tail. Apply a gentle music fade only at the very end of the complete ad.
 REMOTION TIMING CONTRACT: create the Seed Audio narration first, obtain real word/line timings, and represent the five lines as Caption JSON objects with text, startMs, endMs, timestampMs, and confidence. Derive scene boundaries from those measured timings; never guess subtitle frames independently from the audio. Line 1 must start and end inside Hook, line 2 entirely inside comparison, lines 3 and 4 entirely inside workflow, and line 5 entirely inside effect/result. No voice or subtitle may cross a scene boundary or enter CTA. Keep each caption start/end within 150ms of its spoken audio. Return the timing manifest with scene startMs/endMs and every caption's assigned scene in the QC summary.

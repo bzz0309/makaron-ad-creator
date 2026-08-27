@@ -502,14 +502,16 @@ def validate_timing_manifest(props: dict[str, Any]) -> None:
             ratio = numeric(safe.get(key), f"safeZone.{key}")
             if ratio + ratio_epsilon < minimum or ratio >= 1:
                 raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum:.6f} and below 1")
-        if numeric(safe["captionTopRatio"], "safeZone.captionTopRatio") < numeric(safe["topRatio"], "safeZone.topRatio"):
-            raise AdCreatorError("Remotion safeZone.captionTopRatio must not enter the top overlay zone")
+        if abs(numeric(safe["captionTopRatio"], "safeZone.captionTopRatio") - numeric(safe["topRatio"], "safeZone.topRatio")) > ratio_epsilon:
+            raise AdCreatorError("Remotion safeZone.captionTopRatio must equal topRatio at the highest Meta-safe position")
     else:
         # Contract-v2 designs created before proportional safe zones remain valid at 1080x1920.
         safe_minimums = {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250}
         for key, minimum in safe_minimums.items():
             if numeric(safe.get(key, 0), f"safeZone.{key}") < minimum:
                 raise AdCreatorError(f"Remotion Meta safeZone.{key} must be at least {minimum}")
+        if numeric(safe.get("captionTopPx"), "safeZone.captionTopPx") != numeric(safe.get("topPx"), "safeZone.topPx"):
+            raise AdCreatorError("Remotion safeZone.captionTopPx must equal topPx at the highest Meta-safe position")
     maximum_characters = numeric(safe.get("maxCharactersPerLine", 0), "safeZone.maxCharactersPerLine")
     if maximum_characters != int(maximum_characters) or int(maximum_characters) not in range(1, 33):
         raise AdCreatorError("Remotion safeZone.maxCharactersPerLine must be between 1 and 32")

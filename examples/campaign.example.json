@@ -38,5 +38,5 @@
     "builder_skill_id": "tiktok-video"
   },
   "assets": {"logo_cta": "bundled://makaron-logo-cta.mp4", "logo_cta_start_seconds": 0.0, "logo_cta_excerpt_seconds": 3.0},
-  "output": {"width": 1080, "height": 1920, "minimum_width": 720, "minimum_height": 1280, "safe_zone": {"profile": "meta-reels", "top_px": 250, "bottom_px": 340, "left_px": 90, "right_px": 180, "caption_top_px": 270, "max_characters_per_line": 20}, "minimum_duration_seconds": 15.0, "preferred_duration_seconds": 18.0, "duration_seconds": 20.0, "format": "mp4"}
+  "output": {"width": 1080, "height": 1920, "minimum_width": 720, "minimum_height": 1280, "safe_zone": {"profile": "meta-reels", "top_px": 250, "bottom_px": 340, "left_px": 90, "right_px": 180, "caption_top_px": 250, "max_characters_per_line": 20}, "minimum_duration_seconds": 15.0, "preferred_duration_seconds": 18.0, "duration_seconds": 20.0, "format": "mp4"}
 }

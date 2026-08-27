@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import socket
 import sys
@@ -10,14 +11,24 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, sanitize_caption_text, validate_ad_remotion_design, validate_timing_manifest
-from .media import bgm_similarity_in_cta, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
-from .prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
+from .media import bgm_similarity_in_cta, comparison_layout_qc, compose_comparison, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
+from .prompts import after_prompt, before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
 from .util import AdCreatorError, project_binding_key, read_json, run as run_command, sha256, write_json
 
 
 MODELS = ["seedance-2-0", "kling", "grok"]
 MAX_MAKARON_UPLOAD_BYTES = 4 * 1024 * 1024
+FIRST_PERSON_MARKERS = {
+    "en": re.compile(r"\b(?:i|me|my|mine|myself)\b", re.IGNORECASE),
+    "ja": re.compile(r"(?:私|わたし|ワタシ|僕|ぼく|ボク|うち|自分)"),
+    "yue": re.compile(r"(?:我|我嘅)"),
+}
+DETACHED_PERSON_MARKERS = {
+    "en": re.compile(r"\b(?:she|her|hers|he|him|his|they|them|their|theirs)\b", re.IGNORECASE),
+    "ja": re.compile(r"(?:彼女|彼氏|彼ら|彼は|彼が|彼の|この女性|この女の子|この人)"),
+    "yue": re.compile(r"(?:佢哋|佢|呢個女仔|呢個女人|呢個人)"),
+}
 
 
 def cached_final_design_matches_effect_segments(
@@ -69,7 +80,7 @@ def plan_for(config: dict[str, Any]) -> list[dict[str, Any]]:
         {"id": "result", "kind": "local", "depends_on": ["effect"]},
         {"id": "bgm", "kind": "generate_audio", "depends_on": ["validate"]},
         {"id": "after", "kind": "generate_image", "depends_on": ["effect"]},
-        {"id": "comparison", "kind": "generate_image", "depends_on": ["before", "after"]},
+        {"id": "comparison", "kind": "local", "depends_on": ["before", "after"]},
     ]
     selected_locales = ad_locales(config)
     for locale in selected_locales:
@@ -329,6 +340,11 @@ class Pipeline:
                 raise AdCreatorError(f"scripts.{locale} must contain exactly five non-empty strings")
             if self.config["target_skill"]["name"].casefold() in lines[0].casefold():
                 raise AdCreatorError(f"scripts.{locale}[0] must be a result-driven Hook and must not repeat the Skill name")
+            joined = " ".join(line.strip() for line in lines)
+            if not FIRST_PERSON_MARKERS[locale].search(joined):
+                raise AdCreatorError(f"scripts.{locale} must establish the user or creator as a first-person speaker")
+            if DETACHED_PERSON_MARKERS[locale].search(joined):
+                raise AdCreatorError(f"scripts.{locale} must not switch to detached third-person narration")
 
     def _generate_before(self) -> None:
         output = self.run_dir / "assets" / "before.png"
@@ -361,10 +377,26 @@ class Pipeline:
             raise AdCreatorError(f"Unknown target-Skill segment role: {role}")
         effect = self.artifact("effect", ".mp4")
         plan = effect_segment_plan(effect)
-        start = float(plan[f"{role}_start"])
-        duration = float(plan[f"{role}_duration"])
+        segment_override = self.config.get("effect_segments", {}).get(role, {})
+        start = float(segment_override.get("start_seconds", plan[f"{role}_start"]))
+        end = float(segment_override.get("end_seconds", start + float(plan[f"{role}_duration"])))
+        duration = end - start
+        playback_speed = float(segment_override.get("playback_speed", 1.0))
+        source_duration = float(plan["source_duration"])
+        if start < 0 or duration <= 0 or end > source_duration + 0.05:
+            raise AdCreatorError(
+                f"Configured {role} range {start:.3f}-{end:.3f}s exceeds Effect duration {source_duration:.3f}s"
+            )
+        if playback_speed < 1.0 or playback_speed > 2.0:
+            raise AdCreatorError(f"Configured {role} playback_speed must be between 1.0 and 2.0")
         output = self.run_dir / "assets" / f"{role}.mp4"
-        extract_video_segment(effect, output, start_seconds=start, duration_seconds=duration)
+        extract_video_segment(
+            effect,
+            output,
+            start_seconds=start,
+            duration_seconds=duration,
+            playback_speed=playback_speed,
+        )
         info = probe_video(output)
         if not is_vertical_resolution_acceptable(info, self.config["output"]):
             raise AdCreatorError(f"Derived {role} video must be vertical 9:16 and at least 720x1280")
@@ -375,6 +407,8 @@ class Pipeline:
             source_effect_sha256=sha256(effect),
             start_seconds=start,
             duration_seconds=duration,
+            output_duration_seconds=float(info["duration"]),
+            playback_speed=playback_speed,
             resolution=f"{info['width']}x{info['height']}",
         )
 
@@ -412,17 +446,25 @@ class Pipeline:
 
     def _generate_comparison(self) -> None:
         output = self.run_dir / "assets" / "comparison.png"
-        result = self._adapter().chat(
-            node_id="comparison",
-            prompt=comparison_prompt(self.config),
-            images=[self.artifact("before"), self.artifact("after")],
-            destination=output,
-            require_generated_image=True,
-        )
+        before = self.artifact("before")
+        after = self.artifact("after")
+        compose_comparison(before, after, output)
+        qc = comparison_layout_qc(before, after, output)
+        qc_path = self.run_dir / "qc" / "comparison-layout.json"
+        write_json(qc_path, qc)
         info = probe_image(output)
-        if not is_vertical_resolution_acceptable(info, self.config["output"]):
-            raise AdCreatorError("Makaron comparison must be vertical 9:16 and at least 720x1280")
-        self.add_artifact("comparison", output, response_id=result.get("response_id"), source_url=result.get("source_url"), source="makaron-composition", resolution=f"{info['width']}x{info['height']}")
+        if (int(info["width"]), int(info["height"])) != (1080, 1920):
+            raise AdCreatorError("Deterministic comparison must be exactly 1080x1920")
+        self.add_artifact(
+            "comparison",
+            output,
+            source="deterministic-local-common-height-composition",
+            resolution="1080x1920",
+            before_sha256=sha256(before),
+            after_sha256=sha256(after),
+            qc_report=str(qc_path.resolve()),
+            common_h=int(qc["layout"]["common_h"]),
+        )
 
     def _generate_workflow(self, ad_locale: str) -> None:
         node_id = f"workflow-{ad_locale}"
@@ -629,6 +671,14 @@ class Pipeline:
             )
             caption_text_changes = sanitize_caption_text(final_design["props"])
             validate_ad_remotion_design(final_design)
+            if not cached_final_design_matches_effect_segments(
+                final_design,
+                hook_duration=float(probe_video(self.artifact("hook", ".mp4"))["duration"]),
+                result_duration=float(probe_video(self.artifact("result", ".mp4"))["duration"]),
+            ):
+                raise AdCreatorError(
+                    "Final Remotion scene durations do not match the current user-selected Hook/Result clips"
+                )
             if binding_changes or result.get("remotion_design_only") or not output.is_file():
                 corrected_response = {"result": {"designs": [final_design]}}
                 corrected = adapter.render_remotion_fallback(node_id, corrected_response, output)
@@ -873,14 +923,6 @@ class Pipeline:
                 "videos": [str(self.artifact("effect", ".mp4"))],
                 "selection_rule": "analyze full clip and export the strongest exact decoded source frame; never regenerate",
                 "expected": "after.png",
-            })
-        elif node_id == "comparison":
-            request.update({
-                "operation": "compose_comparison_in_makaron",
-                "prompt": comparison_prompt(self.config),
-                "images": [str(self.artifact("before")), str(self.artifact("after"))],
-                "input_roles": ["locked_before", "locked_exact_effect_keyframe"],
-                "expected": "comparison.png",
             })
         elif node_id == "bgm":
             request.update({

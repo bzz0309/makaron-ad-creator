@@ -7,7 +7,7 @@ from array import array
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from .util import AdCreatorError, require_binary, run, sha256
 
@@ -42,23 +42,34 @@ def effect_segment_plan(video: Path, *, preferred_hook_seconds: float = 2.5, min
     }
 
 
-def extract_video_segment(video: Path, output: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+def extract_video_segment(
+    video: Path,
+    output: Path,
+    *,
+    start_seconds: float,
+    duration_seconds: float,
+    playback_speed: float = 1.0,
+) -> Path:
     """Encode an exact time range from a source video without generating new content."""
     ffmpeg = require_binary("ffmpeg")
     output.parent.mkdir(parents=True, exist_ok=True)
-    run([
+    command = [
         ffmpeg,
         "-hide_banner",
         "-loglevel",
         "error",
         "-y",
-        "-i",
-        str(video),
         "-ss",
         f"{start_seconds:.3f}",
         "-t",
         f"{duration_seconds:.3f}",
+        "-i",
+        str(video),
         "-an",
+    ]
+    if abs(playback_speed - 1.0) > 0.001:
+        command += ["-vf", f"setpts=(PTS-STARTPTS)/{playback_speed:.6f}"]
+    command += [
         "-c:v",
         "libx264",
         "-preset",
@@ -70,19 +81,9 @@ def extract_video_segment(video: Path, output: Path, *, start_seconds: float, du
         "-movflags",
         "+faststart",
         str(output),
-    ], timeout=600)
+    ]
+    run(command, timeout=600)
     return output
-
-
-def _contain(image: Image.Image, size: tuple[int, int]) -> Image.Image:
-    target_w, target_h = size
-    scale = min(target_w / image.width, target_h / image.height)
-    resized = image.resize((round(image.width * scale), round(image.height * scale)), Image.Resampling.LANCZOS)
-    panel = Image.new("RGB", (target_w, target_h), "black")
-    left = (target_w - resized.width) // 2
-    top = (target_h - resized.height) // 2
-    panel.paste(resized, (left, top))
-    return panel
 
 
 def _font(size: int) -> ImageFont.ImageFont:
@@ -97,26 +98,206 @@ def _font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def compose_comparison(before: Path, after: Path, output: Path, width: int = 1080, height: int = 1920) -> Path:
-    canvas = Image.new("RGB", (width, height), "black")
+def _comparison_source(path: Path) -> Image.Image:
+    with Image.open(path) as raw:
+        oriented = ImageOps.exif_transpose(raw)
+        if oriented.mode in {"RGBA", "LA"} or "transparency" in oriented.info:
+            rgba = oriented.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (0, 0, 0, 255))
+            background.alpha_composite(rgba)
+            return background.convert("RGB")
+        return oriented.convert("RGB")
+
+
+def _comparison_render(
+    before: Path,
+    after: Path,
+    *,
+    width: int = 1080,
+    height: int = 1920,
+) -> tuple[Image.Image, dict[str, Any]]:
+    if (width, height) != (1080, 1920):
+        raise AdCreatorError("Before/After comparison canvas is locked to 1080x1920")
     gap = 10
-    panel_w = (width - gap) // 2
-    panel_h = round(height * 0.72)
-    top = (height - panel_h) // 2 - 50
-    for index, source in enumerate((before, after)):
-        with Image.open(source) as raw:
-            panel = _contain(raw.convert("RGB"), (panel_w, panel_h))
-        x = 0 if index == 0 else panel_w + gap
-        canvas.paste(panel, (x, top))
+    minimum_outer_margin = 40
+    label_gap = 35
+    font_size = 72
+    stroke_width = 5
+    font = _font(font_size)
+    metric_draw = ImageDraw.Draw(Image.new("RGB", (1, 1), "black"))
+    relative_label_boxes = {
+        label: metric_draw.textbbox((0, 0), label, anchor="ms", font=font, stroke_width=stroke_width)
+        for label in ("BEFORE", "AFTER")
+    }
+    label_top_relative = min(box[1] for box in relative_label_boxes.values())
+    label_bottom_relative = max(box[3] for box in relative_label_boxes.values())
+    label_visual_h = label_bottom_relative - label_top_relative
+    sources = {
+        "before": _comparison_source(before),
+        "after": _comparison_source(after),
+    }
+    aspect_sum = sum(image.width / image.height for image in sources.values())
+    available_pair_w = width - (2 * minimum_outer_margin) - gap
+    width_limited_h = math.floor(available_pair_w / aspect_sum)
+    available_image_h = height - label_gap - label_visual_h
+    common_h = min(width_limited_h, available_image_h)
+    if common_h < 1:
+        raise AdCreatorError("Before/After source proportions leave no renderable common image height")
+
+    rendered_widths = {
+        role: max(1, round(source.width * common_h / source.height))
+        for role, source in sources.items()
+    }
+    while sum(rendered_widths.values()) + gap > width - (2 * minimum_outer_margin):
+        common_h -= 1
+        if common_h < 1:
+            raise AdCreatorError("Before/After source proportions leave no renderable common image height")
+        rendered_widths = {
+            role: max(1, round(source.width * common_h / source.height))
+            for role, source in sources.items()
+        }
+
+    group_h = common_h + label_gap + label_visual_h
+    image_top = (height - group_h) // 2
+    image_bottom = image_top + common_h
+    label_baseline_y = image_bottom + label_gap - label_top_relative
+    pair_w = rendered_widths["before"] + gap + rendered_widths["after"]
+    pair_left = (width - pair_w) // 2
+    pair_right = pair_left + pair_w
+    canvas = Image.new("RGB", (width, height), "black")
     draw = ImageDraw.Draw(canvas)
-    font = _font(72)
-    label_y = top + panel_h + 35
-    for index, label in enumerate(("BEFORE", "AFTER")):
-        center_x = panel_w // 2 if index == 0 else panel_w + gap + panel_w // 2
-        box = draw.textbbox((0, 0), label, font=font, stroke_width=4)
-        draw.text((center_x - (box[2] - box[0]) / 2, label_y), label, font=font, fill="white", stroke_width=5, stroke_fill="black")
+    image_layout: dict[str, dict[str, Any]] = {}
+    label_layout: dict[str, dict[str, Any]] = {}
+    roles = (
+        ("before", "BEFORE", pair_left),
+        ("after", "AFTER", pair_left + rendered_widths["before"] + gap),
+    )
+    for role, label, image_left in roles:
+        source = sources[role]
+        rendered_w = rendered_widths[role]
+        resized = source.resize((rendered_w, common_h), Image.Resampling.LANCZOS)
+        image_right = image_left + rendered_w
+        canvas.paste(resized, (image_left, image_top))
+        image_center_x = image_left + rendered_w / 2
+        draw.text(
+            (image_center_x, label_baseline_y),
+            label,
+            anchor="ms",
+            font=font,
+            fill="white",
+            stroke_width=stroke_width,
+            stroke_fill="black",
+        )
+        label_bbox = draw.textbbox(
+            (image_center_x, label_baseline_y),
+            label,
+            anchor="ms",
+            font=font,
+            stroke_width=stroke_width,
+        )
+        image_layout[role] = {
+            "source_width": source.width,
+            "source_height": source.height,
+            "left": image_left,
+            "top": image_top,
+            "right": image_right,
+            "bottom": image_bottom,
+            "rendered_width": rendered_w,
+            "rendered_height": common_h,
+            "center_x": image_center_x,
+            "fully_contained": image_left >= 0 and image_right <= width,
+        }
+        label_layout[role] = {
+            "text": label,
+            "anchor_center_x": image_center_x,
+            "baseline_y": label_baseline_y,
+            "visible_top": label_bbox[1],
+            "bbox": list(label_bbox),
+            "image_center_delta_px": 0.0,
+        }
+    layout = {
+        "version": 2,
+        "canvas": {"width": width, "height": height, "background": "#000000"},
+        "gap_px": gap,
+        "minimum_outer_margin_px": minimum_outer_margin,
+        "common_h": common_h,
+        "group": {
+            "top": image_top,
+            "bottom": image_top + group_h,
+            "height": group_h,
+            "left": pair_left,
+            "right": pair_right,
+            "width": pair_w,
+            "outer_left": pair_left,
+            "outer_right": width - pair_right,
+        },
+        "images": image_layout,
+        "labels": label_layout,
+        "label_gap_px": label_gap,
+        "label_font_size_px": font_size,
+        "label_stroke_width_px": stroke_width,
+    }
+    return canvas, layout
+
+
+def comparison_layout_qc(
+    before: Path,
+    after: Path,
+    output: Path,
+    *,
+    width: int = 1080,
+    height: int = 1920,
+) -> dict[str, Any]:
+    expected, layout = _comparison_render(before, after, width=width, height=height)
+    with Image.open(output) as raw:
+        actual = raw.convert("RGB")
+    images = layout["images"]
+    labels = layout["labels"]
+    before_box = images["before"]
+    after_box = images["after"]
+    allowed = Image.new("L", (width, height), 0)
+    allowed_draw = ImageDraw.Draw(allowed)
+    for item in images.values():
+        allowed_draw.rectangle((item["left"], item["top"], item["right"] - 1, item["bottom"] - 1), fill=255)
+    for item in labels.values():
+        left, top, right, bottom = item["bbox"]
+        allowed_draw.rectangle((math.floor(left), math.floor(top), math.ceil(right), math.ceil(bottom)), fill=255)
+    if actual.size == (width, height):
+        non_black = ImageChops.difference(actual, Image.new("RGB", actual.size, "black"))
+        outside_mask = ImageOps.invert(allowed)
+        outside_rgb = Image.merge("RGB", (outside_mask, outside_mask, outside_mask))
+        background_black = ImageChops.multiply(non_black, outside_rgb).getbbox() is None
+        pixel_exact = ImageChops.difference(actual, expected).getbbox() is None
+    else:
+        background_black = False
+        pixel_exact = False
+    checks = {
+        "canvas_1080x1920": actual.size == (1080, 1920),
+        "actual_image_gap_10px": after_box["left"] - before_box["right"] == layout["gap_px"] == 10,
+        "outer_margins_symmetric_lte_1px": abs(layout["group"]["outer_left"] - layout["group"]["outer_right"]) <= 1,
+        "outer_margins_at_least_40px": min(layout["group"]["outer_left"], layout["group"]["outer_right"]) >= 40,
+        "rendered_height_delta_lte_1px": abs(before_box["rendered_height"] - after_box["rendered_height"]) <= 1,
+        "rendered_top_delta_lte_1px": abs(before_box["top"] - after_box["top"]) <= 1,
+        "rendered_bottom_delta_lte_1px": abs(before_box["bottom"] - after_box["bottom"]) <= 1,
+        "images_fully_contained": before_box["fully_contained"] and after_box["fully_contained"],
+        "labels_centered_lte_1px": all(item["image_center_delta_px"] <= 1 for item in labels.values()),
+        "labels_share_baseline": labels["before"]["baseline_y"] == labels["after"]["baseline_y"],
+        "labels_35px_below_images_lte_1px": all(abs((item["visible_top"] - before_box["bottom"]) - 35) <= 1 for item in labels.values()),
+        "group_vertically_centered_lte_1px": abs(layout["group"]["top"] - (height - layout["group"]["bottom"])) <= 1,
+        "background_outside_images_and_labels_black": background_black,
+        "output_matches_deterministic_render": pixel_exact,
+    }
+    report = {"status": "PASS" if all(checks.values()) else "FAIL", "layout": layout, "checks": checks}
+    if report["status"] != "PASS":
+        failed = ", ".join(name for name, passed in checks.items() if not passed)
+        raise AdCreatorError(f"Before/After comparison QC failed: {failed}")
+    return report
+
+
+def compose_comparison(before: Path, after: Path, output: Path, width: int = 1080, height: int = 1920) -> Path:
+    canvas, _ = _comparison_render(before, after, width=width, height=height)
     output.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(output, quality=95)
+    canvas.save(output, format="PNG", optimize=True)
     return output
 
 

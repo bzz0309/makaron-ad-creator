@@ -2,6 +2,8 @@
 
 用户只需要提供一张输入图和一个 Makaron Marketplace Skill 名称，并可选需要的语言。系统可以只输出英文、日文或香港粤语，也可以输出任意组合；不传语言时默认输出三语。
 
+五句广告旁白统一使用用户或创作者的第一人称亲身体验：自己的照片、自己在 Makaron 的操作、自己的最终感受。英文使用自然的 `I/my`，粤语使用 `我/我嘅`，日语先建立一人称后可自然省略主语；禁止切换成旁观者对“她/他/佢/彼女”的描述。
+
 The CLI owns orchestration, state, retries, project isolation, deterministic composition, workflow synthesis, QC, and provenance. Makaron or another Agent owns only the generative nodes described by the CLI. This prevents a large Skill document from becoming an unreliable hidden state machine.
 
 ## 安装（和音乐库 CLI 一样）
@@ -43,15 +45,17 @@ Agent 也可以用更短的二参数形式：
 makaron-ad /absolute/path/input.jpg "Marketplace Skill 名称"
 ```
 
-这一条命令会自动：查找 Skill 元数据和 ID、为“Skill ID + 输入图 SHA-256”创建或复用隔离的 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。同一 Skill 与同一张输入图会继续复用；更换输入图不会混用旧素材；媒体数量达到保护阈值时会自动轮换到新一代项目并保留历史绑定。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。After 不再按固定百分比抽帧：Makaron 会分析完整效果视频并导出最精彩且稳定的真实源帧；对比图也由 Makaron 基于锁定的 Before/After 像素排版。
+这一条命令会自动：查找 Skill 元数据和 ID、为“Skill ID + 输入图 SHA-256”创建或复用隔离的 Makaron 项目、只生成所选语言的文案、对应 App 操作视频和成片、重试失败节点、做 QC 并打包交付。同一 Skill 与同一张输入图会继续复用；更换输入图不会混用旧素材；媒体数量达到保护阈值时会自动轮换到新一代项目并保留历史绑定。映射固定为 `en→英语录屏`、`ja→日语录屏`、`yue→繁体中文录屏`。After 不再按固定百分比抽帧：Makaron 会分析完整效果视频并导出最精彩且稳定的真实源帧。对比图不再交给模型排版，而由 CLI 确定性本地合成。
+
+Before/After 对比图固定为 1080×1920 纯黑画布。CLI 根据两张原图比例计算同一个 `common_h`，让两张完整原图按该高度等比缩放；不裁切、不拉伸、不 cover-fit、不重绘。两张图以实际渲染框为准固定间隔 10px，组成的整体水平居中，左右外侧至少各留 40px 黑边且宽度误差不超过 1px。`BEFORE` / `AFTER` 分别对齐实际图像中心，使用同一基线并位于实际画面底边下方 35px，整组画面与标签垂直居中。像素级 QC 会验证两图 rendered height/top/bottom 误差不超过 1px、实际图间隔、左右外边距、标签中心，以及图片和标签以外的区域保持纯黑。
 
 录屏节点直接运行用户提供的 v5 `edit-makaron-app-workflow-recording` 通用 Skill，不再调用不匹配的 `screen-demo`。CLI 传入 Marketplace Skill ID 和所选 UI 语言；v5 自动读取真实目录顺序、Skill 封面、localized label/prompt 与所需输入，确定性生成 4 秒 iOS 操作视频，并要求 keyframe sheet、QC JSON 和 version-2 manifest 同时通过。无需人工录屏。
 
 每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`。目标 Skill 只生成一次连续 Effect；CLI 从开头提取 Hook，再从后续不重叠区间提取 Result，并在 QC 中核对同一个 Effect SHA-256 和时间范围。节奏会在 15–20 秒内自适应：Hook 通常约 2.5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留后续完整 payoff。视频模型优先 Seedance 2.0，失败才依次回退；输出目标为 1080×1920，最低接受 720×1280。
 
-CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、水平居中、最多两行、每行最多 20 个可见字符；模板和回退渲染都会清除手工换行及字面量 `\\n`，由实际宽度自动换行。Meta Reels 默认预留顶部 250px、底部 340px、左侧 90px、右侧 180px，字幕从 y=270 起；旧的距顶 140px 不用于 Meta，因为会被平台 UI 遮挡。
+CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、水平居中、最多两行、每行最多 20 个可见字符；模板和回退渲染都会清除手工换行及字面量 `\\n`，由实际宽度自动换行。Meta Reels 默认预留顶部 250px、底部 340px、左侧 90px、右侧 180px，字幕固定从最高安全位置 y=250 起；旧的距顶 140px 不用于 Meta，因为会被平台 UI 遮挡。
 
-Final 节点不会把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。原生 1080×1920 的权威 source URL 会直接复用；Effect 衍生的 Hook/Result、v5 workflow 与固定 CTA 若来自本地或低分辨率，会先用自适应 CRF 规范为 1080×1920 的上传代理，再通过 `makaron admin upload` 以 CDN URL 引用并按 SHA-256 缓存。它不再为了 4 MiB 限制把全部素材固定降成 720×1280。BGM 和 Makaron 对比图优先复用原始 CDN URL。
+Final 节点不会把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。原生 1080×1920 的权威 source URL 会直接复用；Effect 衍生的 Hook/Result、v5 workflow 与固定 CTA 若来自本地或低分辨率，会先用自适应 CRF 规范为 1080×1920 的上传代理，再通过 `makaron admin upload` 以 CDN URL 引用并按 SHA-256 缓存。它不再为了 4 MiB 限制把全部素材固定降成 720×1280。本地确定性对比图也会通过同一内容哈希上传缓存后交给 final。
 
 CTA 原声不使用，也不再走本地 edge-tts、FFmpeg concat/amix、ASS 字幕或 PIL 最终合成。如果 Makaron 已生成的 Remotion design 因平台 `Forbidden` 无法 materialize，CLI 会保留失败响应中的完整 design，先把其中素材 URL 重新绑定到当前 campaign，再用固定版本 Remotion 渲染这同一份、通过同步字幕/场景边界 contract v2 的 design；不会误用项目旧素材，也不会把上传的 CTA/素材附件当成最终视频。回退 runtime 支持 Remotion `Loop`，保证整条 BGM 铺满成片。
 

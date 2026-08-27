@@ -9,10 +9,10 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 
-from makaron_ad_creator.media import compose_comparison, is_vertical_resolution_acceptable, normalize_near_vertical_resolution
+from makaron_ad_creator.media import comparison_layout_qc, compose_comparison, is_vertical_resolution_acceptable, normalize_near_vertical_resolution
 from makaron_ad_creator.cli import _project_for_skill, main, project_binding_key, resolve_campaign_path
 from makaron_ad_creator.pipeline import Pipeline, cached_final_design_matches_effect_segments, is_non_retryable_error, plan_for
-from makaron_ad_creator.prompts import after_prompt, before_prompt, bgm_prompt, comparison_prompt, effect_prompt, final_prompt, script_prompt
+from makaron_ad_creator.prompts import after_prompt, before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
 from makaron_ad_creator.schema import BUNDLED_LOGO_CTA_MASTER_URI, DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, campaign_template, locale_config, validate_config
 from makaron_ad_creator.util import AdCreatorError, read_json, write_json
 
@@ -59,7 +59,7 @@ class PipelineTests(unittest.TestCase):
         ]
         write_json(path, {
             "compositionContractVersion": 2,
-            "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 270, "maxCharactersPerLine": 20},
+            "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250, "maxCharactersPerLine": 20},
             "captions": captions,
             "scenes": scenes,
             "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
@@ -116,7 +116,7 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("result", final["depends_on"])
             self.assertNotIn("effect", final["depends_on"])
         self.assertEqual(next(node for node in plan if node["id"] == "after")["kind"], "generate_image")
-        self.assertEqual(next(node for node in plan if node["id"] == "comparison")["kind"], "generate_image")
+        self.assertEqual(next(node for node in plan if node["id"] == "comparison")["kind"], "local")
         effect = next(node for node in plan if node["id"] == "effect")
         hook = next(node for node in plan if node["id"] == "hook")
         result = next(node for node in plan if node["id"] == "result")
@@ -145,11 +145,20 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["output"]["safe_zone"]["top_px"], 250)
         self.assertEqual(config["output"]["safe_zone"]["bottom_px"], 340)
         self.assertAlmostEqual(config["output"]["safe_zone"]["top_ratio"], 250 / 1920)
-        self.assertAlmostEqual(config["output"]["safe_zone"]["caption_top_ratio"], 270 / 1920)
+        self.assertAlmostEqual(config["output"]["safe_zone"]["caption_top_ratio"], 250 / 1920)
         self.assertEqual(config["output"]["safe_zone"]["max_characters_per_line"], 32)
         self.assertEqual(config["automation"]["builder_skill_id"], "tiktok-video")
         self.assertLess(DEFAULT_LOGO_CTA.stat().st_size, 1_000_000)
         self.assertGreater(DEFAULT_LOGO_CTA_MASTER.stat().st_size, DEFAULT_LOGO_CTA.stat().st_size)
+
+    def test_legacy_caption_position_is_normalized_to_highest_meta_safe_y(self) -> None:
+        path = self.make_campaign()
+        config = read_json(path)
+        config["output"]["safe_zone"]["caption_top_px"] = 270
+        config["output"]["safe_zone"]["caption_top_ratio"] = 270 / 1920
+        validated = validate_config(config, path)
+        self.assertEqual(validated["output"]["safe_zone"]["caption_top_px"], 250)
+        self.assertAlmostEqual(validated["output"]["safe_zone"]["caption_top_ratio"], 250 / 1920)
 
     def test_legacy_full_cta_uri_resolves_to_upload_safe_excerpt_for_final(self) -> None:
         path = self.make_campaign()
@@ -183,12 +192,12 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("within 150ms", prompt)
         self.assertIn("never pause to ask the user a timing question", prompt)
         self.assertIn("older 140px", prompt)
-        self.assertIn("y=270", prompt)
+        self.assertIn("y=250", prompt)
         self.assertIn("at most 32 visible characters", prompt)
         self.assertIn("Prefer one physical line", prompt)
         self.assertIn("measured balanced wrap", prompt)
         self.assertIn("never leave an orphan line of only one or two words", prompt)
-        self.assertIn("CSS top to exactly y=270", prompt)
+        self.assertIn("CSS top to exactly y=250", prompt)
         self.assertIn("horizontally centered inside the full safe content width", prompt)
         self.assertIn("must not contain literal backslash-n", prompt)
         self.assertIn("topRatio=", prompt)
@@ -210,8 +219,20 @@ class PipelineTests(unittest.TestCase):
         scripts_prompt = script_prompt(config)
         self.assertIn("must not say or repeat the exact Skill name", scripts_prompt)
         self.assertIn("under 1.8 seconds", scripts_prompt)
-        self.assertIn("揀呢個效果。", scripts_prompt)
+        self.assertIn("first-person testimonial", scripts_prompt)
+        self.assertIn("I opened Makaron.", scripts_prompt)
+        self.assertIn("Makaronを開いた。", scripts_prompt)
+        self.assertIn("我揀咗呢個效果。", scripts_prompt)
+        self.assertIn("not commands addressed to the viewer", scripts_prompt)
         self.assertIn("never a Mandarin reading", scripts_prompt)
+        config["effect_segments"] = {
+            "hook": {"start_seconds": 0.0, "end_seconds": 3.0, "playback_speed": 1.0},
+            "result": {"start_seconds": 8.0, "end_seconds": 14.0, "playback_speed": 1.2},
+        }
+        segment_prompt = final_prompt(config, "en", scripts)
+        self.assertIn("Hook for exactly 3.000s", segment_prompt)
+        self.assertIn("Result for exactly 5.000s", segment_prompt)
+        self.assertIn("override the builder's default 2.5-second Hook", segment_prompt)
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
@@ -395,8 +416,14 @@ class PipelineTests(unittest.TestCase):
             render_remotion_fallback=Mock(side_effect=render_fallback),
         )
         final_info = {"width": 1080, "height": 1920, "duration": 18.0, "codec": "h264", "has_audio": True, "bytes": 1024}
+        def fake_probe(video: Path) -> dict:
+            if Path(video).name == "hook.mp4":
+                return {**final_info, "duration": 2.5}
+            if Path(video).name == "result.mp4":
+                return {**final_info, "duration": 6.0}
+            return final_info
         with patch.object(pipeline, "_adapter", return_value=adapter), \
-             patch("makaron_ad_creator.pipeline.probe_video", return_value=final_info), \
+             patch("makaron_ad_creator.pipeline.probe_video", side_effect=fake_probe), \
              patch("makaron_ad_creator.pipeline.bgm_similarity_in_cta", return_value=0.9):
             pipeline._generate_final("en", 1)
         adapter.render_remotion_fallback.assert_called_once()
@@ -419,40 +446,44 @@ class PipelineTests(unittest.TestCase):
         pipeline.add_artifact("before", before)
         pipeline.add_artifact("after", after)
 
-        for node_id in ("after", "comparison"):
-            node = next(item for item in pipeline.plan if item["id"] == node_id)
-            pipeline._write_agent_request(node)
+        after_node = next(item for item in pipeline.plan if item["id"] == "after")
+        pipeline._write_agent_request(after_node)
 
         after_request = read_json(path.parent / "run" / "requests" / "after.json")
         self.assertEqual(after_request["operation"], "select_exact_effect_keyframe")
         self.assertIn("strongest exact decoded source frame", after_request["selection_rule"])
         self.assertNotIn("82%", after_request["prompt"])
-        comparison_request = read_json(path.parent / "run" / "requests" / "comparison.json")
-        self.assertEqual(comparison_request["operation"], "compose_comparison_in_makaron")
         self.assertIn("strongest", after_prompt(config))
-        self.assertIn("Makaron", comparison_prompt(config))
+        self.assertFalse((path.parent / "run" / "requests" / "comparison.json").exists())
+        self.assertEqual(next(item for item in pipeline.plan if item["id"] == "comparison")["kind"], "local")
 
     def test_hook_and_result_are_exact_non_overlapping_effect_segments(self) -> None:
         path = self.make_campaign()
         pipeline = Pipeline(path, executor="agent")
+        pipeline.config["effect_segments"] = {
+            "hook": {"start_seconds": 0.0, "end_seconds": 3.0, "playback_speed": 1.0},
+            "result": {"start_seconds": 8.0, "end_seconds": 14.0, "playback_speed": 1.2},
+        }
         effect = self.root / "effect.mp4"
         effect.write_bytes(b"one target skill effect source")
         pipeline.add_artifact("effect", effect)
+        extract_calls: list[tuple[float, float, float]] = []
 
-        def fake_extract(source: Path, output: Path, *, start_seconds: float, duration_seconds: float) -> Path:
+        def fake_extract(source: Path, output: Path, *, start_seconds: float, duration_seconds: float, playback_speed: float) -> Path:
             self.assertEqual(source.resolve(), effect.resolve())
+            extract_calls.append((start_seconds, duration_seconds, playback_speed))
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(f"{start_seconds:.1f}-{duration_seconds:.1f}".encode())
             return output
 
         segment_plan = {
-            "source_duration": 8.0,
+            "source_duration": 15.0,
             "hook_start": 0.0,
             "hook_duration": 2.5,
             "result_start": 2.5,
             "result_duration": 5.5,
         }
-        video_info = {"width": 1080, "height": 1920, "duration": 2.5}
+        video_info = {"width": 1080, "height": 1920, "duration": 5.0}
         with patch("makaron_ad_creator.pipeline.effect_segment_plan", return_value=segment_plan), \
              patch("makaron_ad_creator.pipeline.extract_video_segment", side_effect=fake_extract), \
              patch("makaron_ad_creator.pipeline.probe_video", return_value=video_info):
@@ -468,6 +499,9 @@ class PipelineTests(unittest.TestCase):
         )
         self.assertEqual(hook_meta["source"], "exact-non-overlapping-effect-segment")
         self.assertEqual(result_meta["source"], "exact-non-overlapping-effect-segment")
+        self.assertEqual(extract_calls, [(0.0, 3.0, 1.0), (8.0, 6.0, 1.2)])
+        self.assertEqual(result_meta["playback_speed"], 1.2)
+        self.assertEqual(result_meta["output_duration_seconds"], 5.0)
 
     def test_cached_final_design_rejected_when_effect_segment_lengths_changed(self) -> None:
         manifest = read_json(self.make_timing_manifest())
@@ -559,6 +593,24 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(AdCreatorError, "must not repeat the Skill name"):
             pipeline._validate_scripts({"en": ["One photo. Example.", "two", "Open Makaron.", "Use the template.", "five"]})
 
+    def test_script_validation_requires_first_person_and_rejects_detached_narration(self) -> None:
+        path = self.make_campaign()
+        pipeline = Pipeline(path, executor="agent")
+        valid_scripts = {
+            "en": ["I never expected this.", "I used one ordinary photo.", "I opened Makaron.", "I picked this effect.", "Now I love the result."],
+            "ja": ["私がこんな姿になれるなんて。", "普通の写真一枚から始めた。", "Makaronを開いた。", "この効果を選んだ。", "仕上がりが本当に好き。"],
+            "yue": ["我真係估唔到。", "我只係用咗一張普通相。", "我打開 Makaron。", "我揀咗呢個效果。", "而家個效果我好鍾意。"],
+        }
+        for locale, lines in valid_scripts.items():
+            pipeline.config["locales"] = [{"ad_locale": locale, "ui_locale": {"en": "en", "ja": "ja", "yue": "zh-Hant"}[locale]}]
+            pipeline._validate_scripts({locale: lines})
+
+        pipeline.config["locales"] = [{"ad_locale": "en", "ui_locale": "en"}]
+        with self.assertRaisesRegex(AdCreatorError, "first-person speaker"):
+            pipeline._validate_scripts({"en": ["What a result.", "One ordinary photo.", "Open Makaron.", "Pick this effect.", "Looks amazing."]})
+        with self.assertRaisesRegex(AdCreatorError, "third-person narration"):
+            pipeline._validate_scripts({"en": ["I could not believe it.", "She used one photo.", "I opened Makaron.", "I picked this effect.", "I love it."]})
+
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()
         pipeline = Pipeline(path, executor="agent")
@@ -592,12 +644,23 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(artifact["qc_manifest"], str(qc.resolve()))
         self.assertEqual(artifact["workflow_manifest"], str(manifest.resolve()))
 
-    def test_comparison_prompt_uses_contain_fit_without_cropping(self) -> None:
+    def test_comparison_pipeline_is_deterministic_local_composition(self) -> None:
         path = self.make_campaign()
-        prompt = comparison_prompt(validate_config(read_json(path), path))
-        self.assertIn("contain-fit", prompt)
-        self.assertIn("never crop", prompt)
-        self.assertNotIn("cover-fit panels", prompt)
+        pipeline = Pipeline(path, executor="agent")
+        before = self.root / "before-local.png"
+        after = self.root / "after-local.png"
+        Image.new("RGB", (600, 1000), "blue").save(before)
+        Image.new("RGB", (1200, 800), "orange").save(after)
+        pipeline.add_artifact("before", before)
+        pipeline.add_artifact("after", after)
+        with patch.object(pipeline, "_adapter") as adapter:
+            pipeline._generate_comparison()
+        adapter.assert_not_called()
+        artifact = pipeline.state["nodes"]["comparison"]["artifacts"][0]
+        self.assertEqual(artifact["source"], "deterministic-local-common-height-composition")
+        self.assertEqual(artifact["resolution"], "1080x1920")
+        report = read_json(Path(artifact["qc_report"]))
+        self.assertEqual(report["status"], "PASS")
 
     def test_orphaned_running_node_is_resumed_without_spending_an_attempt(self) -> None:
         path = self.make_campaign()
@@ -642,7 +705,11 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(request["must_use_bound_project"])
 
         scripts = self.root / "scripts.json"
-        write_json(scripts, {locale: [f"{locale}-{index}" for index in range(5)] for locale in ("en", "ja", "yue")})
+        write_json(scripts, {
+            "en": ["I never expected this.", "I used one photo.", "I opened Makaron.", "I picked this effect.", "I love the result."],
+            "ja": ["私がこんな姿になれるなんて。", "普通の写真一枚から始めた。", "Makaronを開いた。", "この効果を選んだ。", "仕上がりが好き。"],
+            "yue": ["我真係估唔到。", "我只係用咗一張相。", "我打開 Makaron。", "我揀咗呢個效果。", "我好鍾意個效果。"],
+        })
         pipeline.complete_agent_node("scripts", scripts, "response-1")
         self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")
         state = read_json(path.parent / "state.json")
@@ -684,9 +751,12 @@ class PipelineTests(unittest.TestCase):
         Image.new("RGB", (700, 900), "blue").save(before)
         Image.new("RGB", (900, 700), "orange").save(after)
         compose_comparison(before, after, output)
+        report = comparison_layout_qc(before, after, output)
         with Image.open(output) as image:
             self.assertEqual(image.size, (1080, 1920))
             self.assertEqual(image.mode, "RGB")
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["layout"]["images"]["before"]["rendered_height"], report["layout"]["images"]["after"]["rendered_height"])
 
     def test_vertical_resolution_accepts_720p_but_rejects_lower(self) -> None:
         output = {"minimum_width": 720, "minimum_height": 1280}

@@ -76,6 +76,38 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
         errors.append("rights.claims_substantiated must be true")
     if rights.get("adult_or_nonperson") is not True:
         errors.append("rights.adult_or_nonperson must be true")
+    effect_segments = config.get("effect_segments", {})
+    if effect_segments:
+        if not isinstance(effect_segments, dict):
+            errors.append("effect_segments must be an object")
+        else:
+            normalized_segments: dict[str, dict[str, float]] = {}
+            for role in ("hook", "result"):
+                segment = effect_segments.get(role)
+                if not isinstance(segment, dict):
+                    errors.append(f"effect_segments.{role} must be an object")
+                    continue
+                try:
+                    start = float(segment["start_seconds"])
+                    end = float(segment["end_seconds"])
+                    speed = float(segment.get("playback_speed", 1.0))
+                    if start < 0 or end <= start or not 1.0 <= speed <= 2.0:
+                        raise ValueError
+                    normalized_segments[role] = {
+                        "start_seconds": start,
+                        "end_seconds": end,
+                        "playback_speed": speed,
+                    }
+                except (KeyError, TypeError, ValueError):
+                    errors.append(
+                        f"effect_segments.{role} requires start_seconds >= 0, end_seconds > start_seconds, and playback_speed 1.0-2.0"
+                    )
+            if set(normalized_segments) == {"hook", "result"}:
+                hook = normalized_segments["hook"]
+                result = normalized_segments["result"]
+                if hook["end_seconds"] > result["start_seconds"]:
+                    errors.append("effect_segments hook and result source ranges must not overlap")
+                config["effect_segments"] = normalized_segments
     locales = config.setdefault("locales", locale_config())
     if not isinstance(locales, list) or not locales:
         errors.append("locales must contain at least one locale mapping")
@@ -123,7 +155,7 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
         "bottom_px": 340,
         "left_px": 90,
         "right_px": 180,
-        "caption_top_px": 270,
+        "caption_top_px": 250,
         "max_characters_per_line": 20,
     }
     for key, value in safe_defaults.items():
@@ -150,6 +182,11 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
             safe_zone[ratio_key] = ratio
         except (TypeError, ValueError, ZeroDivisionError):
             errors.append(f"output.safe_zone.{ratio_key} must be a ratio between 0 and 1")
+    # Captions begin at the highest Meta-safe position. Normalize legacy campaigns
+    # that stored the former 270px inset instead of allowing the old layout to
+    # survive through resume.
+    if isinstance(safe_zone.get("top_ratio"), float):
+        safe_zone["caption_top_ratio"] = safe_zone["top_ratio"]
     if all(isinstance(safe_zone.get(key), float) for key in ratio_specs):
         if safe_zone["caption_top_ratio"] < safe_zone["top_ratio"]:
             errors.append("output.safe_zone.caption_top_ratio must not enter the top overlay zone")
@@ -320,12 +357,12 @@ def campaign_template(
                 "bottom_px": 340,
                 "left_px": 90,
                 "right_px": 180,
-                "caption_top_px": 270,
+                "caption_top_px": 250,
                 "top_ratio": 250 / 1920,
                 "bottom_ratio": 340 / 1920,
                 "left_ratio": 90 / 1080,
                 "right_ratio": 180 / 1080,
-                "caption_top_ratio": 270 / 1920,
+                "caption_top_ratio": 250 / 1920,
                 "max_characters_per_line": 32,
             },
             "minimum_duration_seconds": 15.0,
