@@ -251,12 +251,40 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
     if not str(audio.get("bgm_style", "")).strip():
         audio["bgm_style"] = "cinematic electronic social ad"
     try:
-        bgm_volume = float(audio.get("bgm_volume", 0.22))
+        bgm_volume = float(audio.get("bgm_volume", 0.14))
     except (TypeError, ValueError):
         bgm_volume = -1
     if not 0 < bgm_volume <= 0.5:
         errors.append("audio.bgm_volume must be greater than 0 and at most 0.5")
     audio["bgm_volume"] = bgm_volume
+    raw_ducking = audio.get("bgm_ducking", {})
+    if not isinstance(raw_ducking, dict):
+        errors.append("audio.bgm_ducking must be an object")
+        raw_ducking = {}
+    duck_enabled = raw_ducking.get("enabled", True)
+    if duck_enabled is not True:
+        errors.append("audio.bgm_ducking.enabled must be true so TTS remains foreground")
+    try:
+        ducked_volume = float(raw_ducking.get("ducked_volume", 0.08))
+    except (TypeError, ValueError):
+        ducked_volume = -1
+    if not 0 < ducked_volume <= bgm_volume:
+        errors.append("audio.bgm_ducking.ducked_volume must be greater than 0 and no louder than audio.bgm_volume")
+    def ducking_milliseconds(key: str, default: int, maximum: int) -> int:
+        try:
+            value = int(raw_ducking.get(key, default))
+        except (TypeError, ValueError):
+            value = -1
+        if not 0 <= value <= maximum:
+            errors.append(f"audio.bgm_ducking.{key} must be between 0 and {maximum}ms")
+        return value
+    audio["bgm_ducking"] = {
+        "enabled": True,
+        "ducked_volume": ducked_volume,
+        "attack_ms": ducking_milliseconds("attack_ms", 80, 1000),
+        "release_ms": ducking_milliseconds("release_ms", 240, 2000),
+        "trigger": "caption_timed_seed_audio",
+    }
     raw_tts_volumes = audio.get("tts_volume_by_locale", {})
     if not isinstance(raw_tts_volumes, dict):
         errors.append("audio.tts_volume_by_locale must be an object")
@@ -264,7 +292,7 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
     tts_volumes: dict[str, float] = {}
     for locale in DEFAULT_AD_LOCALES:
         try:
-            volume = float(raw_tts_volumes.get(locale, 1.0))
+            volume = float(raw_tts_volumes.get(locale, 1.35))
         except (TypeError, ValueError):
             volume = -1
         if not 0.5 <= volume <= 2.0:
@@ -321,7 +349,7 @@ def campaign_template(
         "style_constraints": ["brand-safe", "identity-stable", "no unsupported claims"],
         "audio": {
             "tts_voice": "natural energetic young-adult female",
-            "tts_volume_by_locale": {"en": 1.0, "ja": 1.0, "yue": 1.0},
+            "tts_volume_by_locale": {"en": 1.35, "ja": 1.35, "yue": 1.35},
             "bgm_prompt": (
                 "at least 20 seconds of polished vertical social-ad background music matching the target Skill: "
                 "immediate hook, clear rhythmic edit points, energetic but refined, instrumental only, "
@@ -329,7 +357,14 @@ def campaign_template(
                 "no early fade-out, loop-friendly ending"
             ),
             "bgm_style": "cinematic electronic social ad",
-            "bgm_volume": 0.22,
+            "bgm_volume": 0.14,
+            "bgm_ducking": {
+                "enabled": True,
+                "ducked_volume": 0.08,
+                "attack_ms": 80,
+                "release_ms": 240,
+                "trigger": "caption_timed_seed_audio",
+            },
             "mute_source_audio": True,
             "cta_source_audio": False,
         },

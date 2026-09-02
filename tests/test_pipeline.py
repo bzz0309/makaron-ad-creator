@@ -133,8 +133,15 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["assets"]["logo_cta_excerpt_seconds"], 3.0)
         self.assertEqual(config["assets"]["logo_cta_start_seconds"], 0.0)
         self.assertEqual(config["audio"]["tts_voice"], "natural energetic young-adult female")
-        self.assertEqual(config["audio"]["tts_volume_by_locale"], {"en": 1.0, "ja": 1.0, "yue": 1.0})
-        self.assertEqual(config["audio"]["bgm_volume"], 0.22)
+        self.assertEqual(config["audio"]["tts_volume_by_locale"], {"en": 1.35, "ja": 1.35, "yue": 1.35})
+        self.assertEqual(config["audio"]["bgm_volume"], 0.14)
+        self.assertEqual(config["audio"]["bgm_ducking"], {
+            "enabled": True,
+            "ducked_volume": 0.08,
+            "attack_ms": 80,
+            "release_ms": 240,
+            "trigger": "caption_timed_seed_audio",
+        })
         self.assertTrue(config["audio"]["mute_source_audio"])
         self.assertFalse(config["audio"]["cta_source_audio"])
         self.assertEqual(config["output"]["minimum_duration_seconds"], 15.0)
@@ -174,7 +181,10 @@ class PipelineTests(unittest.TestCase):
         scripts = {"en": [f"line {index}" for index in range(5)]}
         prompt = final_prompt(config, "en", scripts)
         self.assertIn("natural energetic young-adult female", prompt)
-        self.assertIn("props.voiceoverVolume=1.00", prompt)
+        self.assertIn("props.voiceoverUrl", prompt)
+        self.assertIn("props.voiceoverVolume=1.35", prompt)
+        self.assertIn("props.bgmVolume=0.14", prompt)
+        self.assertIn("props.audioDucking={enabled:true, duckedVolume:0.08, attackMs:80, releaseMs:240", prompt)
         self.assertIn("LOCKED FINAL ORDER", prompt)
         self.assertIn("Hook video", prompt)
         self.assertIn("comparison image", prompt)
@@ -220,9 +230,11 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("must not say or repeat the exact Skill name", scripts_prompt)
         self.assertIn("under 1.8 seconds", scripts_prompt)
         self.assertIn("first-person testimonial", scripts_prompt)
-        self.assertIn("I opened Makaron.", scripts_prompt)
+        self.assertIn("Open Makaron.", scripts_prompt)
+        self.assertIn("Use the template.", scripts_prompt)
         self.assertIn("Makaronを開いた。", scripts_prompt)
-        self.assertIn("我揀咗呢個效果。", scripts_prompt)
+        self.assertIn("テンプレートを選んだ。", scripts_prompt)
+        self.assertIn("我揀咗個模板。", scripts_prompt)
         self.assertIn("not commands addressed to the viewer", scripts_prompt)
         self.assertIn("never a Mandarin reading", scripts_prompt)
         config["effect_segments"] = {
@@ -597,19 +609,21 @@ class PipelineTests(unittest.TestCase):
         path = self.make_campaign()
         pipeline = Pipeline(path, executor="agent")
         valid_scripts = {
-            "en": ["I never expected this.", "I used one ordinary photo.", "I opened Makaron.", "I picked this effect.", "Now I love the result."],
-            "ja": ["私がこんな姿になれるなんて。", "普通の写真一枚から始めた。", "Makaronを開いた。", "この効果を選んだ。", "仕上がりが本当に好き。"],
-            "yue": ["我真係估唔到。", "我只係用咗一張普通相。", "我打開 Makaron。", "我揀咗呢個效果。", "而家個效果我好鍾意。"],
+            "en": ["I never expected this.", "I used one ordinary photo.", "Open Makaron.", "Use the template.", "Now I love the result."],
+            "ja": ["私がこんな姿になれるなんて。", "普通の写真一枚から始めた。", "Makaronを開いた。", "テンプレートを選んだ。", "仕上がりが本当に好き。"],
+            "yue": ["我真係估唔到。", "我只係用咗一張普通相。", "我打開 Makaron。", "我揀咗個模板。", "而家個效果我好鍾意。"],
         }
         for locale, lines in valid_scripts.items():
             pipeline.config["locales"] = [{"ad_locale": locale, "ui_locale": {"en": "en", "ja": "ja", "yue": "zh-Hant"}[locale]}]
             pipeline._validate_scripts({locale: lines})
 
         pipeline.config["locales"] = [{"ad_locale": "en", "ui_locale": "en"}]
+        with self.assertRaisesRegex(AdCreatorError, "locked action statements"):
+            pipeline._validate_scripts({"en": ["I never expected this.", "I used one ordinary photo.", "I opened Makaron.", "I chose an effect.", "Now I love the result."]})
         with self.assertRaisesRegex(AdCreatorError, "first-person speaker"):
-            pipeline._validate_scripts({"en": ["What a result.", "One ordinary photo.", "Open Makaron.", "Pick this effect.", "Looks amazing."]})
+            pipeline._validate_scripts({"en": ["What a result.", "One ordinary photo.", "Open Makaron.", "Use the template.", "Looks amazing."]})
         with self.assertRaisesRegex(AdCreatorError, "third-person narration"):
-            pipeline._validate_scripts({"en": ["I could not believe it.", "She used one photo.", "I opened Makaron.", "I picked this effect.", "I love it."]})
+            pipeline._validate_scripts({"en": ["I could not believe it.", "She used one photo.", "Open Makaron.", "Use the template.", "I love it."]})
 
     def test_workflow_uses_bundled_v5_skill_and_requires_qc_manifest(self) -> None:
         path = self.make_campaign()
@@ -706,9 +720,9 @@ class PipelineTests(unittest.TestCase):
 
         scripts = self.root / "scripts.json"
         write_json(scripts, {
-            "en": ["I never expected this.", "I used one photo.", "I opened Makaron.", "I picked this effect.", "I love the result."],
-            "ja": ["私がこんな姿になれるなんて。", "普通の写真一枚から始めた。", "Makaronを開いた。", "この効果を選んだ。", "仕上がりが好き。"],
-            "yue": ["我真係估唔到。", "我只係用咗一張相。", "我打開 Makaron。", "我揀咗呢個效果。", "我好鍾意個效果。"],
+            "en": ["I never expected this.", "I used one photo.", "Open Makaron.", "Use the template.", "I love the result."],
+            "ja": ["私がこんな姿になれるなんて。", "普通の写真一枚から始めた。", "Makaronを開いた。", "テンプレートを選んだ。", "仕上がりが好き。"],
+            "yue": ["我真係估唔到。", "我只係用咗一張相。", "我打開 Makaron。", "我揀咗個模板。", "我好鍾意個效果。"],
         })
         pipeline.complete_agent_node("scripts", scripts, "response-1")
         self.assertEqual(pipeline.run(), "WAITING_FOR_AGENT")

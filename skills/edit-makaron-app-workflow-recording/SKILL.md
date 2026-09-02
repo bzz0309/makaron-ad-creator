@@ -67,13 +67,13 @@ Keep this timeline fixed unless the user asks for a different duration:
 
 ```text
 0.00–0.25  localized home page at the true top
-0.25–1.40  eased scroll to the target's catalog row
-1.42–1.76  white outer pulse on the template card
-1.47–1.72  magenta inner pulse at the identical center
+0.25–1.25  eased scroll to the target's catalog row
+1.28–1.79  held white outer pulse on the template card
+1.32–1.79  held magenta inner pulse at the identical center
 1.80       clean hard cut
 1.80–3.45  animated detail cover with all required inputs populated
-3.48–3.82  white outer pulse on Create
-3.53–3.78  magenta inner pulse at the identical center
+3.10–3.93  held white outer pulse on Create
+3.16–3.93  held magenta inner pulse at the identical center
 4.00       end
 ```
 

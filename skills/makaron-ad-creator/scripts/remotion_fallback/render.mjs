@@ -67,14 +67,52 @@ if (typeof React.__makaronEditableId !== 'function') {
 }
 const runtimeProps = ${JSON.stringify(props)};
 const runtimeVoiceoverUrl = String(runtimeProps.voiceoverUrl || '');
-const runtimeVoiceoverVolume = Number(runtimeProps.voiceoverVolume || 1);
+const runtimeBgmUrl = String(runtimeProps.bgmUrl || '');
+const runtimeFps = ${fps};
+const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+const numberOr = (value, fallback) => Number.isFinite(Number(value)) ? Number(value) : fallback;
+const runtimeVoiceoverVolume = clamp(numberOr(runtimeProps.voiceoverVolume, 1.35), 0.5, 2);
+const runtimeBgmVolume = clamp(numberOr(runtimeProps.bgmVolume, 0.14), 0.01, 0.5);
+const runtimeDucking = runtimeProps.audioDucking && typeof runtimeProps.audioDucking === 'object'
+  ? runtimeProps.audioDucking
+  : {};
+const runtimeDuckedBgmVolume = clamp(numberOr(runtimeDucking.duckedVolume, 0.08), 0.01, runtimeBgmVolume);
+const runtimeDuckAttackMs = clamp(numberOr(runtimeDucking.attackMs, 80), 0, 1000);
+const runtimeDuckReleaseMs = clamp(numberOr(runtimeDucking.releaseMs, 240), 0, 2000);
+const runtimeCaptionIntervals = Array.isArray(runtimeProps.captions)
+  ? runtimeProps.captions
+    .map((caption) => ({startMs: Number(caption?.startMs), endMs: Number(caption?.endMs)}))
+    .filter((caption) => Number.isFinite(caption.startMs) && Number.isFinite(caption.endMs) && caption.endMs > caption.startMs)
+  : [];
+const duckedBgmVolumeAtFrame = (frame) => {
+  if (runtimeDucking.enabled !== true || runtimeCaptionIntervals.length === 0) return runtimeBgmVolume;
+  const timeMs = frame / runtimeFps * 1000;
+  let volume = runtimeBgmVolume;
+  for (const caption of runtimeCaptionIntervals) {
+    const attackStart = caption.startMs - runtimeDuckAttackMs;
+    const releaseEnd = caption.endMs + runtimeDuckReleaseMs;
+    if (timeMs < attackStart || timeMs > releaseEnd) continue;
+    if (timeMs < caption.startMs && runtimeDuckAttackMs > 0) {
+      const progress = clamp((timeMs - attackStart) / runtimeDuckAttackMs, 0, 1);
+      volume = Math.min(volume, runtimeBgmVolume + (runtimeDuckedBgmVolume - runtimeBgmVolume) * progress);
+    } else if (timeMs > caption.endMs && runtimeDuckReleaseMs > 0) {
+      const progress = clamp((timeMs - caption.endMs) / runtimeDuckReleaseMs, 0, 1);
+      volume = Math.min(volume, runtimeDuckedBgmVolume + (runtimeBgmVolume - runtimeDuckedBgmVolume) * progress);
+    } else {
+      volume = Math.min(volume, runtimeDuckedBgmVolume);
+    }
+  }
+  return volume;
+};
 const Audio = (inputProps) => {
   const isVoiceover = runtimeVoiceoverUrl && String(inputProps.src || '') === runtimeVoiceoverUrl;
-  const gain = isVoiceover ? runtimeVoiceoverVolume : 1;
+  const isBgm = runtimeBgmUrl && String(inputProps.src || '') === runtimeBgmUrl;
+  if (isVoiceover) return <RemotionAudio {...inputProps} volume={runtimeVoiceoverVolume} />;
+  if (isBgm) return <RemotionAudio {...inputProps} volume={duckedBgmVolumeAtFrame} />;
   const originalVolume = inputProps.volume;
   const volume = typeof originalVolume === 'function'
-    ? (frame) => Number(originalVolume(frame)) * gain
-    : Number(originalVolume ?? 1) * gain;
+    ? (frame) => Number(originalVolume(frame))
+    : Number(originalVolume ?? 1);
   return <RemotionAudio {...inputProps} volume={volume} />;
 };
 ${code}

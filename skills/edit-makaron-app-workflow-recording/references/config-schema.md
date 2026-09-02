@@ -112,9 +112,9 @@ one interaction with two tap entries that use exactly the same `x,y`.
 
 - `at`: edited-output time.
 - `x`, `y`: touch center in final-output pixels.
-- `duration`: outer normally `0.22–0.34s`; inner normally `0.18–0.25s`.
-- `radius`: outer normally `68–74px`; inner normally `46–52px`.
-- `line_width`: outer default `9px`; inner default `7px`.
+- `duration`: for the synthetic four-second v5 recording, hold the template ring for at least `0.45s` and the Create/Use ring for at least `0.75s`; inner and outer rings overlap for nearly the whole dwell.
+- `radius`: for the synthetic v5 recording, outer is `104–118px`; inner is `74–86px`, so both survive final-video downscaling.
+- `line_width`: for the synthetic v5 recording, outer is `14px`; inner is `11px`.
 - `color`: outer default `#FFFFFF`; inner default `#FF2FD1`.
 - `steps`: optional animation frames, clamped to `4–20`.
 

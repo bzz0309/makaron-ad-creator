@@ -47,15 +47,38 @@ CARD_GAP_Y = 24
 CARD_ROW_HEIGHT = CARD_HEIGHT + CARD_GAP_Y
 TIMELINE = {
     "home_hold": [0.0, 0.25],
-    "home_scroll": [0.25, 1.40],
-    "template_outer": [1.42, 1.76],
-    "template_inner": [1.47, 1.72],
+    "home_scroll": [0.25, 1.25],
+    # Hold the double ring after the selected card has stopped moving.  The
+    # 0.5s dwell and thicker strokes remain legible in the 270x480 QC sheet
+    # and in the downscaled final ad.
+    "template_outer": [1.28, 1.79],
+    "template_inner": [1.32, 1.79],
     "detail_cut": 1.80,
     "detail_hold": [1.80, 3.45],
-    "create_outer": [3.48, 3.82],
-    "create_inner": [3.53, 3.78],
+    # Keep the second double ring on the Create/Use control long enough to
+    # establish the action after the detail page has appeared.
+    "create_outer": [3.10, 3.93],
+    "create_inner": [3.16, 3.93],
     "end": 4.0,
 }
+
+PULSE_STYLES = {
+    "template": {
+        "outer": {"color": (255, 255, 255), "radius": 118, "width": 14},
+        "inner": {"color": (255, 47, 209), "radius": 86, "width": 11},
+    },
+    "create": {
+        "outer": {"color": (255, 255, 255), "radius": 104, "width": 14},
+        "inner": {"color": (255, 47, 209), "radius": 74, "width": 11},
+    },
+}
+
+# Keep the status bar entirely black on detail frames.  The source boxes read
+# the real circular controls from the approved skin, while their destinations
+# place those controls wholly over the Hero image rather than across the status
+# boundary that used to contain the stale purple strip.
+DETAIL_ICON_SOURCES = ((124, 143, 200, 219), (880, 143, 956, 219))
+DETAIL_ICON_DESTINATIONS = ((124, STATUS_HEIGHT + 20), (880, STATUS_HEIGHT + 20))
 
 
 class SyntheticError(RuntimeError):
@@ -588,16 +611,16 @@ def draw_pulse(canvas: Image.Image, center: tuple[float, float], time_value: flo
     if time_value < start or time_value > end:
         return
     progress = (time_value - start) / (end - start)
-    eased = 1.0 - (1.0 - progress) ** 3
-    radius = max_radius * (0.48 + 0.52 * eased)
-    alpha = round(245 * (1.0 - progress**1.7))
+    # This is a held affordance, not a flash: keep both rings opaque and only
+    # gently expand them.  The previous 0.48→1.00 expansion plus fade-to-zero
+    # made the visual cue disappear after final-video downscaling.
+    eased = 0.5 - 0.5 * math.cos(math.pi * progress)
+    radius = max_radius * (0.74 + 0.26 * eased)
+    alpha = round(255 - 20 * eased)
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     x, y = center
     draw.ellipse((x - radius, y - radius, x + radius, y + radius), outline=_alpha_color(color, alpha), width=width)
-    if progress < 0.42:
-        dot_radius = max_radius * 0.10 * (1.0 - progress / 0.42)
-        draw.ellipse((x - dot_radius, y - dot_radius, x + dot_radius, y + dot_radius), fill=_alpha_color(color, alpha))
     canvas.alpha_composite(overlay)
 
 
@@ -629,16 +652,23 @@ def draw_home_frame(cards: list[CatalogCard], target_index: int, fonts: Fonts, s
     draw_bottom_nav(canvas, skin)
     paste_ios_status_bar(canvas, skin.home_top)
     center = ((target_rect[0] + target_rect[2]) / 2, (target_rect[1] + target_rect[3]) / 2)
-    draw_pulse(canvas, center, time_value, tuple(TIMELINE["template_outer"]), (255, 255, 255), 74, 9)
-    draw_pulse(canvas, center, time_value, tuple(TIMELINE["template_inner"]), (255, 47, 209), 52, 7)
+    outer = PULSE_STYLES["template"]["outer"]
+    inner = PULSE_STYLES["template"]["inner"]
+    draw_pulse(canvas, center, time_value, tuple(TIMELINE["template_outer"]), outer["color"], outer["radius"], outer["width"])
+    draw_pulse(canvas, center, time_value, tuple(TIMELINE["template_inner"]), inner["color"], inner["radius"], inner["width"])
     return canvas.convert("RGB"), center, target_rect
 
 
-def paste_detail_icon(canvas: Image.Image, skin: UISkin, box: tuple[int, int, int, int]) -> None:
-    crop = skin.detail.crop(box)
+def paste_detail_icon(
+    canvas: Image.Image,
+    skin: UISkin,
+    source_box: tuple[int, int, int, int],
+    destination: tuple[int, int],
+) -> None:
+    crop = skin.detail.crop(source_box)
     mask = Image.new("L", crop.size, 0)
     ImageDraw.Draw(mask).ellipse((0, 0, crop.width - 1, crop.height - 1), fill=255)
-    canvas.paste(crop, (box[0], box[1]), mask)
+    canvas.paste(crop, destination, mask)
 
 
 def draw_detail_frame(
@@ -695,14 +725,16 @@ def draw_detail_frame(
     create_rect = (760, 1740, 928, 1817)
     _draw_text(draw, (802, 1760), create_text, fonts.bold(28), "#e84adb")
     create_center = ((create_rect[0] + create_rect[2]) / 2, (create_rect[1] + create_rect[3]) / 2)
-    draw_pulse(canvas, create_center, time_value, tuple(TIMELINE["create_outer"]), (255, 255, 255), 74, 9)
-    draw_pulse(canvas, create_center, time_value, tuple(TIMELINE["create_inner"]), (255, 47, 209), 52, 7)
-    paste_ios_status_bar(canvas, skin.detail)
-    # The approved iPhone detail capture places these controls across the
-    # status/content boundary. Paste each complete control once, after both
-    # layers, so the status crop cannot leave a duplicated half-circle.
-    paste_detail_icon(canvas, skin, (124, 143, 200, 219))
-    paste_detail_icon(canvas, skin, (880, 143, 956, 219))
+    outer = PULSE_STYLES["create"]["outer"]
+    inner = PULSE_STYLES["create"]["inner"]
+    draw_pulse(canvas, create_center, time_value, tuple(TIMELINE["create_outer"]), outer["color"], outer["radius"], outer["width"])
+    draw_pulse(canvas, create_center, time_value, tuple(TIMELINE["create_inner"]), inner["color"], inner["radius"], inner["width"])
+    # Do not paste the top of detail.png here: its y=0..175 baseline contains
+    # a stale deep-purple strip that is not present in the real detail page.
+    # The canvas was initialized black, so the status region stays pure black.
+    # Reuse only the two circular control pixels and float them over the Hero.
+    for source_box, destination in zip(DETAIL_ICON_SOURCES, DETAIL_ICON_DESTINATIONS):
+        paste_detail_icon(canvas, skin, source_box, destination)
     return canvas.convert("RGB"), create_center, create_rect
 
 
@@ -807,6 +839,7 @@ def render_locale(
     template_rect = (0, 0, 0, 0)
     create_center = (0.0, 0.0)
     create_rect = (0, 0, 0, 0)
+    detail_status_bar_is_pure_black = False
     key_indices = {0, 48, 60, 108}
     try:
         for frame_index in range(round(DURATION * FPS)):
@@ -816,6 +849,8 @@ def render_locale(
             else:
                 detail_index = min(len(target_frames) - 1, max(0, frame_index - round(TIMELINE["detail_cut"] * FPS)))
                 frame, create_center, create_rect = draw_detail_frame(target_frames[detail_index], before_images, item, fonts, skin, locale, time_value)
+                if frame_index == round(TIMELINE["detail_cut"] * FPS):
+                    detail_status_bar_is_pure_black = frame.crop((0, 0, WIDTH, STATUS_HEIGHT)).getbbox() is None
             if frame_index in key_indices:
                 keyframes.append(frame.copy().resize((270, 480), Image.Resampling.LANCZOS))
             process.stdin.write(frame.tobytes())
@@ -835,9 +870,13 @@ def render_locale(
     def inside(center: tuple[float, float], rect: tuple[int, int, int, int], radius: float) -> bool:
         return rect[0] + radius <= center[0] <= rect[2] - radius and rect[1] + radius <= center[1] <= rect[3] - radius
     visual_checks = {
-        "template_pulse_center_inside_card": inside(template_center, template_rect, 74),
+        "template_pulse_center_inside_card": inside(template_center, template_rect, PULSE_STYLES["template"]["outer"]["radius"]),
         "create_pulse_center_inside_control": create_rect[0] <= create_center[0] <= create_rect[2] and create_rect[1] <= create_center[1] <= create_rect[3],
         "double_pulses_concentric": True,
+        "template_double_pulse_held_for_at_least_0_45_seconds": TIMELINE["template_outer"][1] - TIMELINE["template_outer"][0] >= 0.45,
+        "create_double_pulse_held_for_at_least_0_75_seconds": TIMELINE["create_outer"][1] - TIMELINE["create_outer"][0] >= 0.75,
+        "detail_status_bar_is_pure_black": detail_status_bar_is_pure_black,
+        "detail_icons_float_on_hero": all(destination[1] >= STATUS_HEIGHT for destination in DETAIL_ICON_DESTINATIONS),
         "starts_at_home_top": True,
         "picker_frames_absent_by_construction": True,
         "localized_label_present": bool(localized_value(item, "labels", locale)),

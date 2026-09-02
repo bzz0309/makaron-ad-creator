@@ -328,11 +328,16 @@ def command_retry(args: argparse.Namespace) -> int:
 
 
 def command_doctor(_: argparse.Namespace) -> int:
+    # The Node launcher resolves a user-configured Makaron binary and passes it
+    # through this variable.  `shutil.which()` only sees PATH, so honor the
+    # explicit executable as well; this keeps `setup` and `doctor` reliable
+    # for nvm/Homebrew/custom installations.
+    makaron_bin = os.environ.get("MAKARON_AD_MAKARON_BIN") or shutil.which("makaron")
     checks = {
         "python": sys.version.split()[0],
         "ffmpeg": shutil.which("ffmpeg"),
         "ffprobe": shutil.which("ffprobe"),
-        "makaron": shutil.which("makaron"),
+        "makaron": makaron_bin,
         "pillow": None,
         "workflow_skill": str(PROJECT_ROOT / "skills" / "edit-makaron-app-workflow-recording" / "SKILL.md"),
         "fixed_logo_cta": str(DEFAULT_LOGO_CTA),

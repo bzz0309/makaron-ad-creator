@@ -12,7 +12,7 @@ from typing import Any
 
 from .adapter import MakaronAdapter, bind_ad_remotion_assets, extract_generated_image_urls, extract_generated_video_urls, extract_json_object, extract_remotion_design, sanitize_caption_text, validate_ad_remotion_design, validate_timing_manifest
 from .media import bgm_similarity_in_cta, comparison_layout_qc, compose_comparison, effect_segment_plan, extract_video_segment, is_vertical_resolution_acceptable, normalize_near_vertical_resolution, probe_audio, probe_image, probe_video
-from .prompts import after_prompt, before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
+from .prompts import LOCKED_ACTION_LINES, after_prompt, before_prompt, bgm_prompt, effect_prompt, final_prompt, script_prompt
 from .schema import DEFAULT_LOGO_CTA, DEFAULT_LOGO_CTA_MASTER, LOCALE_TO_UI, ad_locales, validate_config
 from .util import AdCreatorError, project_binding_key, read_json, run as run_command, sha256, write_json
 
@@ -338,6 +338,9 @@ class Pipeline:
             lines = scripts.get(locale)
             if not isinstance(lines, list) or len(lines) != 5 or not all(isinstance(line, str) and line.strip() for line in lines):
                 raise AdCreatorError(f"scripts.{locale} must contain exactly five non-empty strings")
+            if tuple(line.strip() for line in lines[2:4]) != LOCKED_ACTION_LINES[locale]:
+                expected = " / ".join(LOCKED_ACTION_LINES[locale])
+                raise AdCreatorError(f"scripts.{locale} lines 3 and 4 must be the locked action statements: {expected}")
             if self.config["target_skill"]["name"].casefold() in lines[0].casefold():
                 raise AdCreatorError(f"scripts.{locale}[0] must be a result-driven Hook and must not repeat the Skill name")
             joined = " ".join(line.strip() for line in lines)
@@ -609,6 +612,22 @@ class Pipeline:
                 return generated_urls[0]
         return self._adapter().publish_local_media(path, role=role)
 
+    def _final_audio_props(self, locale: str) -> dict[str, Any]:
+        """Serialize one foreground-TTS/ducked-BGM contract into every final design."""
+        audio = self.config["audio"]
+        ducking = audio["bgm_ducking"]
+        return {
+            "voiceoverVolume": float(audio["tts_volume_by_locale"][locale]),
+            "bgmVolume": float(audio["bgm_volume"]),
+            "audioDucking": {
+                "enabled": True,
+                "duckedVolume": float(ducking["ducked_volume"]),
+                "attackMs": int(ducking["attack_ms"]),
+                "releaseMs": int(ducking["release_ms"]),
+                "trigger": str(ducking["trigger"]),
+            },
+        }
+
     def _generate_final(self, locale: str, attempt: int) -> None:
         scripts = read_json(self.artifact("scripts"))
         output = self.run_dir / "final" / f"final-artifact-{locale}.mp4"
@@ -620,12 +639,13 @@ class Pipeline:
         cached_response_path = self.run_dir / "responses" / f"{node_id}.json"
         cached_response = read_json(cached_response_path) if cached_response_path.is_file() else None
         cached_design = extract_remotion_design(cached_response) if cached_response else None
-        voiceover_volume = float(self.config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.0))
+        audio_props = self._final_audio_props(locale)
+        voiceover_volume = float(audio_props["voiceoverVolume"])
         cached_contract_valid = False
         caption_text_changes = 0
         if attempt == 1 and cached_design:
             try:
-                cached_design["props"]["voiceoverVolume"] = voiceover_volume
+                cached_design["props"].update(audio_props)
                 cached_binding_changes = bind_ad_remotion_assets(
                     cached_design,
                     comparison_image=comparison_input,
@@ -662,7 +682,7 @@ class Pipeline:
             final_design = extract_remotion_design(result.get("response"))
             if not final_design:
                 raise AdCreatorError("Final Remotion output is missing the required caption/scene timing contract")
-            final_design["props"]["voiceoverVolume"] = voiceover_volume
+            final_design["props"].update(audio_props)
             binding_changes = bind_ad_remotion_assets(
                 final_design,
                 comparison_image=comparison_input,
@@ -691,7 +711,7 @@ class Pipeline:
             "workflowVideo": videos[2],
             "ctaVideo": videos[3],
             "bgmUrl": bgm_input,
-            "voiceoverVolume": voiceover_volume,
+            **audio_props,
             "corrected_stale_props": binding_changes,
             "caption_text_values_sanitized": caption_text_changes,
         })
@@ -729,6 +749,9 @@ class Pipeline:
             continuous_bgm_sha256=sha256(self.artifact("bgm")),
             composition_engine="makaron-agent-remotion",
             tts_engine="seed-audio",
+            voiceover_volume=voiceover_volume,
+            bgm_volume=float(audio_props["bgmVolume"]),
+            bgm_ducking=audio_props["audioDucking"],
             timing_manifest=str(timing_manifest.resolve()),
             composition_contract_version=2,
             asset_binding_manifest=str(binding_manifest.resolve()),
@@ -736,7 +759,6 @@ class Pipeline:
             caption_text_values_sanitized=caption_text_changes,
             render_fallback=result.get("render_fallback"),
             voiceover_script=scripts[locale],
-            voiceover_volume=voiceover_volume,
         )
 
     def _qc(self) -> None:
@@ -849,6 +871,8 @@ class Pipeline:
                 "bgm_path": str(bgm_target.resolve()),
                 "bgm_sha256": sha256(bgm_target),
                 "bgm_volume": self.config["audio"]["bgm_volume"],
+                "tts_volume_by_locale": self.config["audio"]["tts_volume_by_locale"],
+                "bgm_ducking": self.config["audio"]["bgm_ducking"],
                 "same_bgm_looped_across_full_video": True,
                 "source_video_audio_muted": True,
                 "cta_source_audio_muted": True,
@@ -971,6 +995,8 @@ class Pipeline:
                     "all_source_video_audio_muted": True,
                     "cta_source_audio_muted": True,
                     "bgm_volume": self.config["audio"]["bgm_volume"],
+                    "voiceover_volume": self.config["audio"]["tts_volume_by_locale"][locale],
+                    "bgm_ducking": self.config["audio"]["bgm_ducking"],
                     "same_bgm_looped_across_full_video": True,
                     "local_ffmpeg_audio_or_subtitle_postprocess": False,
                 },

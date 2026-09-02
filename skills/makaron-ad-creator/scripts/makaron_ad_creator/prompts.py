@@ -13,10 +13,17 @@ LOCALE_RULES = {
 }
 
 LOCALE_NAMES = {"en": "English", "ja": "Japanese", "yue": "Hong Kong Cantonese"}
+LOCKED_ACTION_LINES = {
+    # These are short action statements within a first-person testimonial, not
+    # calls to action aimed at the viewer.  Keep their meaning stable so the
+    # localized v5 workflow always matches the spoken steps.
+    "en": ("Open Makaron.", "Use the template."),
+    "ja": ("Makaronを開いた。", "テンプレートを選んだ。"),
+    "yue": ("我打開 Makaron。", "我揀咗個模板。"),
+}
 SCRIPT_ANCHORS = {
-    "en": ["...", "...", "I opened Makaron.", "I picked this effect.", "..."],
-    "ja": ["...", "...", "Makaronを開いた。", "この効果を選んだ。", "..."],
-    "yue": ["...", "...", "我打開 Makaron。", "我揀咗呢個效果。", "..."],
+    locale: ["...", "...", *LOCKED_ACTION_LINES[locale], "..."]
+    for locale in LOCALE_NAMES
 }
 
 
@@ -30,12 +37,12 @@ def script_prompt(config: dict[str, Any]) -> str:
 TARGET SKILL NAME: {skill['name']}
 TARGET SKILL CORE: {skill['core']}
 TRANSFORMATION TYPE: {skill.get('transformation_type', 'identity')}
-Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 Open Makaron; 4 select the effect; 5 emotional result.
+Use exactly these beats: 1 surprising hook; 2 say it started from one ordinary photo; 3 open Makaron; 4 choose a template; 5 emotional result.
 Write the complete script as one personal first-person testimonial from the user or creator who supplied the photo. The speaker describes their own input, actions, and result; never switch to a detached narrator or call the depicted subject he, she, they, her, him, 佢, 彼, or 彼女. Lines 3 and 4 describe actions the speaker took, not commands addressed to the viewer. English uses I/my naturally; Cantonese uses 我/我嘅 naturally; Japanese must establish an explicit first-person speaker at least once and may then omit the pronoun where natural. Do not mechanically repeat the pronoun when the language normally drops it.
 Apply these locale rules:
 {locale_rules}
-Line 1 must be a genuine curiosity or surprising-result Hook, must not say or repeat the exact Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others.
-Return this exact shape: {json.dumps(exact_shape, ensure_ascii=False)}"""
+Lines 3 and 4 are locked literal action lines. Do not paraphrase, conjugate, reorder, or replace them: {json.dumps({locale: list(LOCKED_ACTION_LINES[locale]) for locale in selected}, ensure_ascii=False)}
+Line 1 must be a genuine curiosity or surprising-result Hook, must not say or repeat the exact Skill name, and must fit under 1.8 seconds when spoken. Keep line 2 under 2.3 seconds when spoken. Do not invent features, prices, ratings, urgency, or claims. Return only the selected locale keys and no others, with five strings per locale in this structural order: {json.dumps(exact_shape, ensure_ascii=False)}"""
 
 
 def before_prompt(config: dict[str, Any]) -> str:
@@ -90,7 +97,11 @@ def final_prompt(config: dict[str, Any], locale: str, scripts: dict[str, list[st
     final_preferred = float(output["preferred_duration_seconds"])
     final_max = float(output["duration_seconds"])
     bgm_volume = float(config["audio"]["bgm_volume"])
-    voiceover_volume = float(config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.0))
+    voiceover_volume = float(config["audio"].get("tts_volume_by_locale", {}).get(locale, 1.35))
+    ducking = config["audio"]["bgm_ducking"]
+    ducked_bgm_volume = float(ducking["ducked_volume"])
+    duck_attack_ms = int(ducking["attack_ms"])
+    duck_release_ms = int(ducking["release_ms"])
     configured_segments = config.get("effect_segments", {})
     if configured_segments:
         hook_segment = configured_segments["hook"]
@@ -124,14 +135,14 @@ TARGET LOCALE: {locale}
 MODEL ROUTING PREFERENCE FOR THIS ATTEMPT: {model_preference}
 LOCALIZATION RULE: {LOCALE_RULES[locale]}
 VOICEOVER SCRIPT: {json.dumps(lines, ensure_ascii=False)}
-Generate one continuous Seed Audio voiceover and read exactly those five lines, once, in order, using this target-locale voice profile: {tts_voice}. Do not read Skill descriptions, UI text, filenames, or production instructions. Complete every line before the Logo CTA begins; the CTA has no voiceover. The final spoken word must not be truncated.
-VOICEOVER MIX LEVEL: serialize props.voiceoverVolume={voiceover_volume:.2f} and apply that gain to the voiceover track only. Keep the BGM at its separately specified level; never use this gain on BGM or source video audio.
+Generate one continuous Seed Audio voiceover and read exactly those five lines, once, in order, using this target-locale voice profile: {tts_voice}. Serialize the generated narration asset as props.voiceoverUrl and consume that prop in the Remotion Composition. Do not read Skill descriptions, UI text, filenames, or production instructions. Complete every line before the Logo CTA begins; the CTA has no voiceover. The final spoken word must not be truncated.
+VOICEOVER MIX LEVEL: serialize props.voiceoverVolume={voiceover_volume:.2f} and apply that gain to the voiceover track only. This is foreground narration and must remain clearly intelligible over music for every word. Never use this gain on BGM or source video audio.
 If measured narration still exceeds its assigned scene, automatically shorten that line while preserving its meaning, regenerate the matching voice and subtitle text, and continue to export. Never extend, loop, freeze, or slow a source clip to fit narration, and never pause to ask the user a timing question.
 ATTACHED ASSET ROLES: image 1 is the simultaneous Before/After comparison; video 1 is the opening Hook segment extracted from the target-Skill effect source; video 2 is the later non-overlapping Result segment from that exact same effect source; video 3 is the locale-correct v5 Makaron workflow; video 4 is the fixed Makaron Logo CTA source; audio 1 is the separately generated instrumental BGM.
 ASSET BINDING: this persistent project may contain media from older campaigns. The Remotion props must use the exact current attachments with these keys: comparisonImage=image 1 URL, hookVideo=video 1 URL, resultVideo=video 2 URL, workflowVideo=video 3 URL, ctaVideo=video 4 URL, bgmUrl=audio 1 URL. Never select an older project image, video, voice, or music asset by recency, filename, or visual similarity. Set the Remotion Composition itself to width={output['width']}, height={output['height']}, fps=30; never infer the composition size from the first attached video.
 LOCKED FINAL ORDER: Hook video; comparison image; localized workflow video; effect/result video; fixed Logo CTA video. {effect_scene_rule} Comparison exactly 2.5s; workflow 3.5-4.5s; Logo CTA exactly {cta_seconds:.1f}s using the source from {float(config['assets']['logo_cta_start_seconds']):.1f}s.
 Use video 1 only for Hook and video 2 only for Result. They are exact, non-overlapping time ranges from one target-Skill effect source. Never reuse, loop, reverse, freeze, or speed-ramp source frames across those two sections, and never request or invent a separately generated Hook.
-Mute the original audio from every attached video, including the Hook, effect video, workflow video, and Logo CTA. Loop audio 1 as the same continuous BGM from 0.0 seconds through the final frame, including throughout the Logo CTA, at relative mix volume {bgm_volume:.2f} under the voiceover. Do not switch tracks, restart with different music, use CTA source audio, add sound effects, or allow a silent tail. Apply a gentle music fade only at the very end of the complete ad.
+Mute the original audio from every attached video, including the Hook, effect video, workflow video, and Logo CTA. Loop audio 1 as the same continuous BGM from 0.0 seconds through the final frame, including throughout the Logo CTA. Serialize props.bgmVolume={bgm_volume:.2f} and props.audioDucking={{enabled:true, duckedVolume:{ducked_bgm_volume:.2f}, attackMs:{duck_attack_ms}, releaseMs:{duck_release_ms}, trigger:"caption-timed-seed-audio"}}. Outside spoken Seed Audio intervals, keep BGM at {bgm_volume:.2f}; from {duck_attack_ms}ms before a measured voice/caption interval through {duck_release_ms}ms after it, sidechain-duck BGM to {ducked_bgm_volume:.2f}, then restore it smoothly. Do not switch tracks, restart with different music, use CTA source audio, add sound effects, or allow a silent tail. Apply a gentle music fade only at the very end of the complete ad.
 REMOTION TIMING CONTRACT: create the Seed Audio narration first, obtain real word/line timings, and represent the five lines as Caption JSON objects with text, startMs, endMs, timestampMs, and confidence. Derive scene boundaries from those measured timings; never guess subtitle frames independently from the audio. Line 1 must start and end inside Hook, line 2 entirely inside comparison, lines 3 and 4 entirely inside workflow, and line 5 entirely inside effect/result. No voice or subtitle may cross a scene boundary or enter CTA. Keep each caption start/end within 150ms of its spoken audio. Return the timing manifest with scene startMs/endMs and every caption's assigned scene in the QC summary.
 If the runtime returns an editable Remotion design, its props must include compositionContractVersion: 2, captions: Caption[], scenes either as an object keyed by hook/comparison/workflow/result/cta or as an array of {{id,startMs,endMs}} objects, lineSceneMap: ["hook", "comparison", "workflow", "workflow", "result"], and safeZone with the exact Meta inset values below. Regardless of representation, set result.startMs no later than caption 5 startMs so line 5 never begins over workflow.
 META SAFE ZONE: treat the insets as canvas-relative ratios, not fixed 1080p pixel coordinates. On the required {output['width']}x{output['height']} composition they resolve to x={safe['left_px']}..{output['width'] - safe['right_px']} and y={safe['top_px']}..{output['height'] - safe['bottom_px']}. Set the subtitle container's CSS top to exactly y={safe['caption_top_px']}; do not add an extra top offset, padding, Math.max(... + offset), or vertical centering. If any runtime preview uses another 9:16 size, recompute every pixel inset from the ratios before layout so captions and faces never drift or clip. The Meta profile overrides the older 140px top-caption convention because 140px lies under account UI.
