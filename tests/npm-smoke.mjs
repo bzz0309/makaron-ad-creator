@@ -59,7 +59,7 @@ function invoke(args, extraEnv = {}) {
 }
 
 assert.match(invoke(['help']), /makaron-ad create/);
-assert.equal(invoke(['version']).trim(), '0.6.4');
+assert.equal(invoke(['version']).trim(), '0.6.5');
 assert.equal(fs.existsSync(fixedLogoCta), true);
 assert.ok(fs.statSync(fixedLogoCta).size > 1_000_000);
 assert.equal(fs.existsSync(uploadLogoCta), true);
@@ -73,8 +73,8 @@ assert.match(remotionFallback, /replace\(\/\\\\n\/g/);
 
 const drySetup = JSON.parse(invoke(['setup', '--dry-run']));
 assert.equal(drySetup.ok, true);
-assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.6.4');
-assert.equal(drySetup.permission_fallback.join(' '), `npm install -g makaron-ad-creator-cli@0.6.4 --prefix ${path.join(temporary, 'npm-global')}`);
+assert.equal(drySetup.global_install.join(' '), 'npm install -g makaron-ad-creator-cli@0.6.5');
+assert.equal(drySetup.permission_fallback.join(' '), `npm install -g makaron-ad-creator-cli@0.6.5 --prefix ${path.join(temporary, 'npm-global')}`);
 assert.equal(drySetup.skill_install.command.includes('makaron-ad-creator'), true);
 
 const dryCreate = JSON.parse(invoke(['create', '--image', '/tmp/input.jpg', '--skill', 'Rainy Kiss', '--dry-run']));

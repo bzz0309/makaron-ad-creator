@@ -7,7 +7,7 @@ import {createRequire} from 'node:module';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 
-const VERSION = '0.6.4';
+const VERSION = '0.6.5';
 const PACKAGE = 'makaron-ad-creator-cli';
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const MAIN_SKILL = path.join(PACKAGE_ROOT, 'skills', 'makaron-ad-creator');
@@ -265,12 +265,29 @@ function bundledBinary(moduleName, property = 'path') {
   }
 }
 
+function ensureExecutableBinary(candidate) {
+  if (!candidate) return null;
+  try {
+    if (process.platform !== 'win32') {
+      const mode = fs.statSync(candidate).mode;
+      fs.chmodSync(candidate, mode | 0o111);
+    }
+    fs.accessSync(candidate, fs.constants.X_OK);
+    return candidate;
+  } catch {
+    return null;
+  }
+}
+
 function runtimeEnvironment(config = readJson(CONFIG_FILE)) {
   const directories = [];
   const localBin = path.join(PACKAGE_ROOT, 'node_modules', '.bin');
   if (fs.existsSync(localBin)) directories.push(localBin);
-  const ffmpeg = bundledBinary('@ffmpeg-installer/ffmpeg');
-  const ffprobe = bundledBinary('@ffprobe-installer/ffprobe');
+  // npm tarball extraction can clear execute bits on Mach-O package assets.
+  // Setup owns these bundled binaries, so restore their executable mode before
+  // adding them to PATH; never silently fall back to a developer's global tool.
+  const ffmpeg = ensureExecutableBinary(bundledBinary('@ffmpeg-installer/ffmpeg'));
+  const ffprobe = ensureExecutableBinary(bundledBinary('@ffprobe-installer/ffprobe'));
   if (ffmpeg) directories.push(path.dirname(ffmpeg));
   if (ffprobe) directories.push(path.dirname(ffprobe));
   directories.push(process.env.PATH || '');
