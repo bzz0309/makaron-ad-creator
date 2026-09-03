@@ -82,7 +82,6 @@ def bgm_prompt(config: dict[str, Any]) -> str:
     audio = config["audio"]
     return f"""Create one original instrumental background-music track for this vertical social ad.
 TARGET SKILL NAME: {config['target_skill']['name']}
-TARGET SKILL CORE: {config['target_skill']['core']}
 MUSIC DIRECTION: {audio['bgm_prompt']}
 The track must be at least 20 seconds and instrumental only: no vocals, speech, chants, recognizable copyrighted melody, or abrupt ending. Start with an immediate hook, maintain useful edit rhythm, stay at full musical energy through the required duration with no early fade-out, and remain loop-friendly for a 15-20 second ad. Return one audio track only."""
 

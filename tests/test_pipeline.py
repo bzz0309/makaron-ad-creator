@@ -248,6 +248,12 @@ class PipelineTests(unittest.TestCase):
         music = bgm_prompt(config)
         self.assertIn("instrumental only", music)
         self.assertIn("no vocals", music)
+        self.assertIn("TARGET SKILL NAME", music)
+        self.assertNotIn(config["target_skill"]["core"], music)
+        long_core_config = json.loads(json.dumps(config))
+        long_core_config["target_skill"]["core"] = "visual workflow detail " * 100
+        self.assertLessEqual(len(bgm_prompt(long_core_config)), 1250)
+        self.assertNotIn(long_core_config["target_skill"]["core"], bgm_prompt(long_core_config))
 
     def test_bound_project_source_image_is_reused_without_reupload(self) -> None:
         path = self.make_campaign()
