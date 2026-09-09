@@ -53,7 +53,7 @@ Before/After 对比图固定为 1080×1920 纯黑画布。CLI 根据两张原图
 
 每条成片固定采用 `Hook 视频 → 对比图 → 录屏视频 → 效果视频 → Logo CTA 视频`。目标 Skill 只生成一次连续 Effect；CLI 从开头提取 Hook，再从后续不重叠区间提取 Result，并在 QC 中核对同一个 Effect SHA-256 和时间范围。节奏会在 15–20 秒内自适应：Hook 通常约 2.5 秒，对比图约 2.5 秒，录屏约 4 秒，效果段保留后续完整 payoff。视频模型优先 Seedance 2.0，失败才依次回退；输出目标为 1080×1920，最低接受 720×1280。
 
-CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、水平居中、最多两行、每行最多 20 个可见字符；模板和回退渲染都会清除手工换行及字面量 `\\n`，由实际宽度自动换行。Meta Reels 默认预留顶部 250px、底部 340px、左侧 90px、右侧 180px，字幕固定从最高安全位置 y=250 起；旧的距顶 140px 不用于 Meta，因为会被平台 UI 遮挡。
+CLI 先用 `makaron music create` 为 campaign 单独生成一条不少于 20 秒的无歌词 BGM；随后每个语言只发一条绑定项目的 `makaron chat`，默认调用内置 `tiktok-video` 的 Remotion composition runtime。运行时先生成 Seed Audio 年轻女声并取得真实 Caption JSON 时间，再按旁白边界安排 Hook/对比图/录屏/效果段，确保第二句完整落在对比图、第三四句完整落在录屏，所有旁白和字幕在 CTA 前结束。全部素材静音，同一 BGM 从头循环到 CTA 结束。字幕只有一组：白字黑描边、无底条、水平居中、最多两行、每行最多 20 个可见字符；模板和回退渲染都会清除手工换行及字面量 `\\n`，由实际宽度自动换行。为避免挡住人物脸部，字幕从 1080×1920 画布的 y=200 起，并按比例缩放；底部 340px、左侧 90px、右侧 180px 仍保留给 Meta UI，顶部视觉区域仅放字幕，不放 CTA 或其他关键 UI。
 
 Final 节点不会把本地大视频直接交给 Makaron CLI 的 signed-URL PUT 通道。原生 1080×1920 的权威 source URL 会直接复用；Effect 衍生的 Hook/Result、v5 workflow 与固定 CTA 若来自本地或低分辨率，会先用自适应 CRF 规范为 1080×1920 的上传代理，再通过 `makaron admin upload` 以 CDN URL 引用并按 SHA-256 缓存。它不再为了 4 MiB 限制把全部素材固定降成 720×1280。本地确定性对比图也会通过同一内容哈希上传缓存后交给 final。
 

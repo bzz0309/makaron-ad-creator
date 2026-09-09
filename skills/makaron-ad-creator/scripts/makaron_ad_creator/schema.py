@@ -151,11 +151,11 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
         "profile": "meta-reels",
         "reference_width": reference_width,
         "reference_height": reference_height,
-        "top_px": 250,
+        "top_px": 200,
         "bottom_px": 340,
         "left_px": 90,
         "right_px": 180,
-        "caption_top_px": 250,
+        "caption_top_px": 200,
         "max_characters_per_line": 20,
     }
     for key, value in safe_defaults.items():
@@ -182,9 +182,9 @@ def validate_config(config: dict[str, Any], config_path: Path) -> dict[str, Any]
             safe_zone[ratio_key] = ratio
         except (TypeError, ValueError, ZeroDivisionError):
             errors.append(f"output.safe_zone.{ratio_key} must be a ratio between 0 and 1")
-    # Captions begin at the highest Meta-safe position. Normalize legacy campaigns
-    # that stored the former 270px inset instead of allowing the old layout to
-    # survive through resume.
+    # Captions begin at the approved face-clear top position. Normalize legacy
+    # campaigns that used the former 250px inset so they do not preserve the
+    # lower, face-obscuring layout when resumed.
     if isinstance(safe_zone.get("top_ratio"), float):
         safe_zone["caption_top_ratio"] = safe_zone["top_ratio"]
     if all(isinstance(safe_zone.get(key), float) for key in ratio_specs):
@@ -388,16 +388,16 @@ def campaign_template(
                 "profile": "meta-reels",
                 "reference_width": 1080,
                 "reference_height": 1920,
-                "top_px": 250,
+                "top_px": 200,
                 "bottom_px": 340,
                 "left_px": 90,
                 "right_px": 180,
-                "caption_top_px": 250,
-                "top_ratio": 250 / 1920,
+                "caption_top_px": 200,
+                "top_ratio": 200 / 1920,
                 "bottom_ratio": 340 / 1920,
                 "left_ratio": 90 / 1080,
                 "right_ratio": 180 / 1080,
-                "caption_top_ratio": 250 / 1920,
+                "caption_top_ratio": 200 / 1920,
                 "max_characters_per_line": 32,
             },
             "minimum_duration_seconds": 15.0,

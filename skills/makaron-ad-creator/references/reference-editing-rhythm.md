@@ -21,7 +21,7 @@ Apply the supported common pattern:
 - Keep the final ad between 15 and 20 seconds, preferring about 18 seconds rather than forcing every Skill to the same duration.
 - Append a continuous 2–3 second Logo CTA inside the same Makaron Remotion composition. The references begin at the supplied CTA source's 0-second frame, so the bundled default is 0–3 seconds.
 - Create Seed Audio first, derive Caption JSON timing from the real audio, and make scene boundaries contain the complete assigned lines: line 1 Hook, line 2 comparison, lines 3–4 workflow, line 5 result. No speech or subtitle crosses into another scene or CTA.
-- For Meta Reels use ratios equivalent to top and caption top `250/1920`, bottom `340/1920`, left `90/1080`, and right `180/1080`. Start captions exactly at the highest safe boundary: y=250 on 1080×1920, recalculated proportionally for any other preview size. The former fixed 140px position falls under Meta account UI, while the superseded 270px position is unnecessarily low.
+- For Meta Reels use ratios equivalent to top and caption top `200/1920`, bottom `340/1920`, left `90/1080`, and right `180/1080`. Start captions exactly at y=200 on 1080×1920, recalculated proportionally for any other preview size. This approved upper caption band is reserved for copy so it clears faces; never place CTA or other critical UI there.
 - Use one subtitle track only: white text, black outline, no background bar, at most two lines and 20 visible characters per line, with measured wrapping inside the safe zone.
 
 The examples demonstrate rhythm, not a license to reuse their people, effect outputs, or audio.

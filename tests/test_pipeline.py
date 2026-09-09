@@ -59,7 +59,7 @@ class PipelineTests(unittest.TestCase):
         ]
         write_json(path, {
             "compositionContractVersion": 2,
-            "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250, "maxCharactersPerLine": 20},
+            "safeZone": {"topPx": 200, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 200, "maxCharactersPerLine": 20},
             "captions": captions,
             "scenes": scenes,
             "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
@@ -149,23 +149,23 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(config["output"]["duration_seconds"], 20.0)
         self.assertEqual(config["output"]["minimum_width"], 720)
         self.assertEqual(config["output"]["minimum_height"], 1280)
-        self.assertEqual(config["output"]["safe_zone"]["top_px"], 250)
+        self.assertEqual(config["output"]["safe_zone"]["top_px"], 200)
         self.assertEqual(config["output"]["safe_zone"]["bottom_px"], 340)
-        self.assertAlmostEqual(config["output"]["safe_zone"]["top_ratio"], 250 / 1920)
-        self.assertAlmostEqual(config["output"]["safe_zone"]["caption_top_ratio"], 250 / 1920)
+        self.assertAlmostEqual(config["output"]["safe_zone"]["top_ratio"], 200 / 1920)
+        self.assertAlmostEqual(config["output"]["safe_zone"]["caption_top_ratio"], 200 / 1920)
         self.assertEqual(config["output"]["safe_zone"]["max_characters_per_line"], 32)
         self.assertEqual(config["automation"]["builder_skill_id"], "tiktok-video")
         self.assertLess(DEFAULT_LOGO_CTA.stat().st_size, 1_000_000)
         self.assertGreater(DEFAULT_LOGO_CTA_MASTER.stat().st_size, DEFAULT_LOGO_CTA.stat().st_size)
 
-    def test_legacy_caption_position_is_normalized_to_highest_meta_safe_y(self) -> None:
+    def test_legacy_caption_position_is_normalized_to_face_clear_y(self) -> None:
         path = self.make_campaign()
         config = read_json(path)
-        config["output"]["safe_zone"]["caption_top_px"] = 270
-        config["output"]["safe_zone"]["caption_top_ratio"] = 270 / 1920
+        config["output"]["safe_zone"]["caption_top_px"] = 250
+        config["output"]["safe_zone"]["caption_top_ratio"] = 250 / 1920
         validated = validate_config(config, path)
-        self.assertEqual(validated["output"]["safe_zone"]["caption_top_px"], 250)
-        self.assertAlmostEqual(validated["output"]["safe_zone"]["caption_top_ratio"], 250 / 1920)
+        self.assertEqual(validated["output"]["safe_zone"]["caption_top_px"], 200)
+        self.assertAlmostEqual(validated["output"]["safe_zone"]["caption_top_ratio"], 200 / 1920)
 
     def test_legacy_full_cta_uri_resolves_to_upload_safe_excerpt_for_final(self) -> None:
         path = self.make_campaign()
@@ -201,13 +201,13 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("Caption JSON objects", prompt)
         self.assertIn("within 150ms", prompt)
         self.assertIn("never pause to ask the user a timing question", prompt)
-        self.assertIn("older 140px", prompt)
-        self.assertIn("y=250", prompt)
+        self.assertIn("approved y=200", prompt)
+        self.assertIn("y=200", prompt)
         self.assertIn("at most 32 visible characters", prompt)
         self.assertIn("Prefer one physical line", prompt)
         self.assertIn("measured balanced wrap", prompt)
         self.assertIn("never leave an orphan line of only one or two words", prompt)
-        self.assertIn("CSS top to exactly y=250", prompt)
+        self.assertIn("CSS top to exactly y=200", prompt)
         self.assertIn("horizontally centered inside the full safe content width", prompt)
         self.assertIn("must not contain literal backslash-n", prompt)
         self.assertIn("topRatio=", prompt)

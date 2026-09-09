@@ -228,7 +228,7 @@ class AdapterTests(unittest.TestCase):
         design = {
             "props": {
                 "compositionContractVersion": 2,
-                "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250, "maxCharactersPerLine": 20},
+                "safeZone": {"topPx": 200, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 200, "maxCharactersPerLine": 20},
                 "captions": captions,
                 "scenes": scenes,
                 "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
@@ -252,7 +252,7 @@ class AdapterTests(unittest.TestCase):
         design = {
             "props": {
                 "compositionContractVersion": 2,
-                "safeZone": {"topPx": 250, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 250, "maxCharactersPerLine": 20},
+                "safeZone": {"topPx": 200, "bottomPx": 340, "leftPx": 90, "rightPx": 180, "captionTopPx": 200, "maxCharactersPerLine": 20},
                 "captions": captions,
                 "scenes": scenes,
                 "lineSceneMap": ["hook", "comparison", "workflow", "workflow", "result"],
@@ -278,16 +278,16 @@ class AdapterTests(unittest.TestCase):
             "props": {
                 "compositionContractVersion": 2,
                 "safeZone": {
-                    "topRatio": 250 / 1920,
+                    "topRatio": 200 / 1920,
                     "bottomRatio": 340 / 1920,
                     "leftRatio": 90 / 1080,
                     "rightRatio": 180 / 1080,
-                    "captionTopRatio": 250 / 1920,
-                    "topPx": 167,
+                    "captionTopRatio": 200 / 1920,
+                    "topPx": 133,
                     "bottomPx": 227,
                     "leftPx": 60,
                     "rightPx": 120,
-                    "captionTopPx": 167,
+                    "captionTopPx": 133,
                     "maxCharactersPerLine": 20,
                 },
                 "captions": captions,
@@ -313,11 +313,11 @@ class AdapterTests(unittest.TestCase):
             "props": {
                 "compositionContractVersion": 2,
                 "safeZone": {
-                    "topRatio": 0.130208,
+                    "topRatio": 0.104167,
                     "bottomRatio": 0.177083,
                     "leftRatio": 0.083333,
                     "rightRatio": 0.166667,
-                    "captionTopRatio": 0.130208,
+                    "captionTopRatio": 0.104167,
                     "maxCharactersPerLine": 20,
                 },
                 "captions": captions,
@@ -326,8 +326,8 @@ class AdapterTests(unittest.TestCase):
             }
         }
         validate_ad_remotion_design(design)
-        design["props"]["safeZone"]["captionTopRatio"] = 270 / 1920
-        with self.assertRaisesRegex(AdCreatorError, "highest Meta-safe position"):
+        design["props"]["safeZone"]["captionTopRatio"] = 250 / 1920
+        with self.assertRaisesRegex(AdCreatorError, "face-clear caption position"):
             validate_ad_remotion_design(design)
 
     def test_final_chat_rejects_source_video_when_export_is_missing(self) -> None:
